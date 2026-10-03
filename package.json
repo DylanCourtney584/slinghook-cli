@@ -1,0 +1,20 @@
+{
+  "name": "slinghook-cli",
+  "version": "0.1.0",
+  "description": "Forward SlingHook webhooks to your local dev server",
+  "type": "module",
+  "bin": {
+    "slinghook": "bin/slinghook.js"
+  },
+  "files": [
+    "bin",
+    "src"
+  ],
+  "engines": {
+    "node": ">=18.17"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "license": "MIT"
+}
