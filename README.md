@@ -29,7 +29,8 @@ slinghook listen <uuid> --forward http://localhost:3000/webhooks
    creates a personal API token (`POST /api/tokens`), and signs that session out.
    Only the token is saved, in `~/.config/slinghook/config.json` (mode 0600).
    The server stores only a SHA-256 hash of the token. Use `--token shk_…` or
-   `SLINGHOOK_TOKEN` to skip the prompt, for example in CI.
+   `SLINGHOOK_TOKEN` to skip the prompt, for example in CI. You can create,
+   view, and revoke tokens under **User Settings → API Tokens** in the dashboard.
 2. **Stream.** `listen` opens `GET /v1/events/<uuid>` with
    `Authorization: Bearer <token>`. This is the same SSE stream the dashboard uses.
    On first connect the server sends recent `history`, which the CLI skips. It
@@ -55,8 +56,6 @@ the same time, or each webhook will be delivered twice.
   forwarded byte-for-byte.
 - There are no retries yet. A failed delivery is reported, and you can replay it
   from the dashboard.
-- There's no UI for listing or revoking tokens yet. The API exists:
-  `GET /api/tokens` and `DELETE /api/tokens/<id>`.
 
 ## Tests
 
