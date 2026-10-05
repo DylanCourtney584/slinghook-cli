@@ -11,6 +11,9 @@ export class ApiError extends Error {
  */
 export function createApi({ server, token = null, cookie = null, fetchImpl = fetch }) {
     async function request(method, path, body) {
+        // The API refuses non-JSON writes (CSRF defence), so writes always carry a JSON body
+        if (method !== 'GET' && body === undefined) body = {};
+
         const headers = { Accept: 'application/json' };
         if (token) headers.Authorization = `Bearer ${token}`;
         if (cookie) headers.Cookie = cookie;
