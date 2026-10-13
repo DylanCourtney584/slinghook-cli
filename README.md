@@ -9,7 +9,7 @@ Requires Node 18.17+. There are no dependencies.
 ```bash
 npm install -g slinghook
 
-slinghook login --server https://slinghook.example.com
+slinghook login --server https://slinghook.co.za
 slinghook endpoints            # list your endpoint UUIDs
 slinghook listen <uuid> --forward http://localhost:3000/webhooks
 ```
