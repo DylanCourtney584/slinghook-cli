@@ -1,5 +1,5 @@
 import { createSseParser } from './sse.js';
-import { forwardLog } from './forward.js';
+import { forwardLog, isRetryable } from './forward.js';
 import { createApi } from './api.js';
 
 const MAX_BACKOFF_MS = 30_000;
@@ -17,6 +17,8 @@ const MAX_BACKOFF_MS = 30_000;
  * @param {string} opts.endpointUuid
  * @param {string} opts.target
  * @param {boolean} [opts.report=true]   Record each delivery in the dashboard's replay history
+ * @param {number} [opts.retries=3]      Extra tries when the local server is down or answers 5xx
+ * @param {number} [opts.retryBaseMs=1000] First retry wait; each later wait doubles (max 30s)
  * @param {object} [opts.logger]
  * @param {AbortSignal} [opts.signal]
  * @param {typeof fetch} [opts.fetchImpl]
@@ -27,6 +29,8 @@ export async function listen({
     endpointUuid,
     target,
     report = true,
+    retries = 3,
+    retryBaseMs = 1_000,
     logger = consoleLogger(),
     signal,
     fetchImpl = fetch
@@ -111,9 +115,22 @@ export async function listen({
             return;
         }
 
-        const result = await forwardLog(log, target, { fetchImpl });
-        logger.delivered(log, result);
+        // Later events wait while one retries, so the app still sees them in order
+        for (let attempt = 1; ; attempt++) {
+            const result = await forwardLog(log, target, { fetchImpl });
+            logger.delivered(log, result);
+            await record(log, result);
 
+            if (!isRetryable(result) || attempt > retries || signal?.aborted) return;
+
+            const waitMs = Math.min(retryBaseMs * 2 ** (attempt - 1), MAX_BACKOFF_MS);
+            logger.retrying?.(log, waitMs, attempt + 1, retries + 1);
+            await sleep(waitMs, signal);
+            if (signal?.aborted) return;
+        }
+    }
+
+    async function record(log, result) {
         if (!report) return;
         try {
             await api.post(`/api/logs/${log.id}/replays`, {
@@ -175,6 +192,9 @@ export function consoleLogger() {
                 ? red(`✗ ${result.error}`)
                 : (result.status < 400 ? green : result.status < 500 ? yellow : red)(String(result.status));
             console.log(`${time()} ${method} #${log.id} → ${outcome} ${dim(`${result.durationMs}ms`)}${sig}`);
+        },
+        retrying(log, waitMs, nextAttempt, maxAttempts) {
+            console.log(dim(`         #${log.id} retrying in ${waitMs / 1000}s (try ${nextAttempt} of ${maxAttempts})`));
         },
         skipped(log, reason) {
             console.log(`${time()} ${String(log.method).padEnd(6)} #${log.id} ${yellow(`skipped: ${reason}`)}`);

@@ -61,6 +61,15 @@ export async function forwardLog(log, target, { timeoutMs = 15_000, fetchImpl = 
     }
 }
 
+/**
+ * Same rule as the server's RelayPolicy: no answer, 408, 425, 429 or 5xx may
+ * succeed later; any other answer is the app's verdict on this payload.
+ */
+export function isRetryable(result) {
+    if (result.error || !result.status) return true;
+    return [408, 425, 429].includes(result.status) || result.status >= 500;
+}
+
 export function buildHeaders(original, contentType, logId) {
     const headers = {};
     for (const [name, value] of Object.entries(original || {})) {

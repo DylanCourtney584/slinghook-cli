@@ -116,3 +116,62 @@ test('fails fast on a revoked token', async () => {
 
     slinghook.close();
 });
+
+test('retries a delivery while the local server is down, then moves on', async () => {
+    let calls = 0;
+    const target = await startServer((req, res) => {
+        calls += 1;
+        req.resume();
+        req.on('end', () => res.writeHead(calls < 3 ? 503 : 200).end());
+    });
+
+    const reports = [];
+    const controller = new AbortController();
+    let connections = 0;
+    const slinghook = await startServer((req, res) => {
+        if (req.url.startsWith('/v1/events/')) {
+            connections += 1;
+            if (connections === 1) {
+                sse(res, [{ id: 1, event: 'log', data: logRow(1) }]);
+            } else {
+                res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+                setTimeout(() => controller.abort(), 100);
+            }
+            return;
+        }
+        let body = '';
+        req.on('data', (c) => (body += c));
+        req.on('end', () => {
+            reports.push(JSON.parse(body).response_status);
+            res.writeHead(201).end('{}');
+        });
+    });
+
+    const retried = [];
+    await listen({
+        server: url(slinghook),
+        token: 'shk_test',
+        endpointUuid: '00000000-0000-4000-8000-000000000000',
+        target: `${url(target)}/webhooks`,
+        retries: 3,
+        retryBaseMs: 5,
+        logger: { ready() {}, delivered() {}, skipped() {}, warn() {}, retrying: (log, ms, next) => retried.push(next) },
+        signal: controller.signal
+    });
+
+    slinghook.close();
+    target.close();
+
+    assert.equal(calls, 3);
+    assert.deepEqual(retried, [2, 3]);
+    assert.deepEqual(reports, [503, 503, 200]);
+});
+
+test('does not retry an answer the app gave on purpose', async () => {
+    const { isRetryable } = await import('../src/forward.js');
+    assert.equal(isRetryable({ status: null, error: 'Connection refused' }), true);
+    assert.equal(isRetryable({ status: 502, error: null }), true);
+    assert.equal(isRetryable({ status: 429, error: null }), true);
+    assert.equal(isRetryable({ status: 400, error: null }), false);
+    assert.equal(isRetryable({ status: 200, error: null }), false);
+});

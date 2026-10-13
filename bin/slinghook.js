@@ -11,13 +11,15 @@ const HELP = `slinghook — forward SlingHook webhooks to your local server
 Usage:
   slinghook login [--server URL] [--token shk_...]
   slinghook endpoints
-  slinghook listen <endpoint-uuid> --forward <url> [--no-report]
+  slinghook listen <endpoint-uuid> --forward <url> [--retries N] [--no-report]
   slinghook logout
 
 Options:
   --server URL     SlingHook server (default: saved config or http://127.0.0.1:8080)
   --token TOKEN    Use an existing API token instead of email/password
   --forward URL    Local URL to deliver webhooks to, e.g. http://localhost:3000/webhooks
+  --retries N      Extra tries when your local server is down or answers 5xx
+                   (default 3, waiting 1s, 2s, 4s; 0 turns retries off)
   --no-report      Don't record deliveries in the dashboard's replay history
 
 Environment:
@@ -33,6 +35,7 @@ async function main(argv) {
             token: { type: 'string' },
             forward: { type: 'string', short: 'f' },
             'no-report': { type: 'boolean', default: false },
+            retries: { type: 'string' },
             help: { type: 'boolean', short: 'h' }
         }
     });
@@ -99,6 +102,11 @@ async function runListen(config, endpointUuid, values) {
         throw new Error(`--forward is not a valid URL: ${values.forward}`);
     }
 
+    const retries = values.retries === undefined ? 3 : Number(values.retries);
+    if (!Number.isInteger(retries) || retries < 0 || retries > 10) {
+        throw new Error('--retries must be a whole number from 0 to 10');
+    }
+
     const controller = new AbortController();
     process.once('SIGINT', () => {
         console.log('\nStopping…');
@@ -111,6 +119,7 @@ async function runListen(config, endpointUuid, values) {
         endpointUuid,
         target,
         report: !values['no-report'],
+        retries,
         signal: controller.signal
     });
 }

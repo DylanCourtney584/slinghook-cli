@@ -43,6 +43,9 @@ slinghook listen <uuid> --forward http://localhost:3000/webhooks
    for real. The CLI adds `X-Webhook-Replay: true` and `X-SlingHook-Log-Id`.
    Deliveries run one at a time with a 15s timeout. Payloads that were
    truncated at capture are skipped.
+   If your server is down, times out, or answers 408, 425, 429 or 5xx, the CLI
+   retries 3 more times (after 1s, 2s and 4s) before moving on. Later webhooks
+   wait, so they still arrive in order. `--retries N` changes the count (0 to 10).
 5. **Report.** Each result is posted to `POST /api/logs/<id>/replays`, so it
    appears in the dashboard's replay history. Use `--no-report` to turn this off.
 
