@@ -7,8 +7,7 @@ so the CLI makes the connection outbound, the same way `stripe listen` does.
 Requires Node 18.17+. There are no dependencies.
 
 ```bash
-cd cli
-npm link                       # puts `slinghook` on your PATH
+npm install -g slinghook
 
 slinghook login --server https://slinghook.example.com
 slinghook endpoints            # list your endpoint UUIDs
@@ -57,8 +56,13 @@ the same time, or each webhook will be delivered twice.
 - There are no retries yet. A failed delivery is reported, and you can replay it
   from the dashboard.
 
-## Tests
+## Developing
 
-```bash
-npm test
-```
+From a checkout of the SlingHook repo, `cd cli && npm link` puts your working copy on
+your PATH, and `npm test` runs the tests.
+
+## Publishing
+
+Bump `version` in `package.json`, then run `npm publish` from this folder. The tests run
+first (`prepublishOnly`), and only `bin/`, `src/`, this README and `package.json` are
+included in the package.
