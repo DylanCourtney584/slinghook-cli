@@ -1,76 +1,68 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { loginWithPassword, sessionCookie } from '../src/login.js';
+import { loginWithBrowser } from '../src/login.js';
 
-const headers = (cookies) => ({ getSetCookie: () => cookies, get: () => null });
-
-test('keeps the last value of a cookie set twice', () => {
-    assert.equal(
-        sessionCookie(headers(['PHPSESSID=old; path=/; HttpOnly', 'PHPSESSID=new; path=/; HttpOnly'])),
-        'PHPSESSID=new'
-    );
-});
-
-test('updates earlier cookies and drops deleted ones', () => {
-    assert.equal(sessionCookie(headers(['PHPSESSID=b; path=/', 'x=deleted; Max-Age=0']), 'PHPSESSID=a; x=1'), 'PHPSESSID=b');
-    assert.equal(sessionCookie(headers([]), 'PHPSESSID=a'), 'PHPSESSID=a');
-});
-
-function fakeServer(routes) {
+function fakeServer(pollAnswers) {
     const calls = [];
     const fetchImpl = async (url, opts) => {
         const path = new URL(url).pathname;
-        calls.push({ path, cookie: opts.headers.Cookie ?? null, body: opts.body ? JSON.parse(opts.body) : null });
-        const { status = 200, body = {}, cookies = [] } = routes[path](opts);
-        return {
-            ok: status < 400,
-            status,
-            statusText: '',
-            headers: headers(cookies),
-            text: async () => JSON.stringify(body)
-        };
+        const body = opts.body ? JSON.parse(opts.body) : null;
+        calls.push({ path, body });
+
+        let status = 200;
+        let data;
+        if (path === '/api/cli/login/start') {
+            data = {
+                device_code: 'dev123', user_code: 'BCDF-GHJK', interval: 5, expires_in: 900,
+                verification_uri: 'http://s/app/?device', verification_uri_complete: 'http://s/app/?device=BCDF-GHJK'
+            };
+        } else {
+            const next = pollAnswers.shift();
+            if (typeof next === 'string') {
+                status = 400;
+                data = { error: next };
+            } else {
+                data = next;
+            }
+        }
+        return { ok: status < 400, status, statusText: '', headers: { get: () => null }, text: async () => JSON.stringify(data) };
     };
     return { calls, fetchImpl };
 }
 
-test('mints the token with the renewed session', async () => {
-    const { calls, fetchImpl } = fakeServer({
-        '/api/login': () => ({ body: { ok: true }, cookies: ['PHPSESSID=first; path=/', 'PHPSESSID=signedin; path=/'] }),
-        '/api/tokens': () => ({ status: 201, body: { token: 'shk_abc' } }),
-        '/api/logout': () => ({ body: { ok: true } })
+test('shows the code, polls until approved, and returns the token', async () => {
+    const { calls, fetchImpl } = fakeServer(['authorization_pending', 'slow_down', { token: 'shk_new', user: { email: 'a@b.c' } }]);
+    const waits = [];
+    let shown = null;
+
+    const result = await loginWithBrowser({
+        server: 'http://s',
+        fetchImpl,
+        onCode: (info) => { shown = info; },
+        sleep: async (ms) => { waits.push(ms); }
     });
 
-    const token = await loginWithPassword({ server: 'http://s', email: 'a@b.c', password: 'pw', fetchImpl });
-
-    assert.equal(token, 'shk_abc');
-    assert.equal(calls[1].cookie, 'PHPSESSID=signedin');
+    assert.deepEqual(result, { token: 'shk_new', email: 'a@b.c' });
+    assert.equal(shown.userCode, 'BCDF-GHJK');
+    assert.equal(shown.urlWithCode, 'http://s/app/?device=BCDF-GHJK');
+    assert.match(calls[0].body.client_name, /^CLI on /);
+    assert.deepEqual(calls.slice(1).map((c) => c.body), Array(3).fill({ device_code: 'dev123' }));
+    // slow_down adds five seconds to every later wait
+    assert.deepEqual(waits, [5000, 5000, 10000]);
 });
 
-test('asks for the two-factor code when the account needs one', async () => {
-    const { calls, fetchImpl } = fakeServer({
-        '/api/login': () => ({ body: { ok: true, two_factor_required: true }, cookies: ['PHPSESSID=pending'] }),
-        '/api/login/2fa': () => ({ body: { ok: true }, cookies: ['PHPSESSID=signedin'] }),
-        '/api/tokens': () => ({ status: 201, body: { token: 'shk_2fa' } }),
-        '/api/logout': () => ({ body: { ok: true } })
-    });
-
-    const token = await loginWithPassword({
-        server: 'http://s', email: 'a@b.c', password: 'pw', fetchImpl, promptCode: async () => '123 456'
-    });
-
-    assert.equal(token, 'shk_2fa');
-    assert.deepEqual(calls[1], { path: '/api/login/2fa', cookie: 'PHPSESSID=pending', body: { code: '123456' } });
-    assert.equal(calls[2].cookie, 'PHPSESSID=signedin');
+test('stops when the sign-in is cancelled in the browser', async () => {
+    const { fetchImpl } = fakeServer(['access_denied']);
+    await assert.rejects(
+        loginWithBrowser({ server: 'http://s', fetchImpl, onCode: () => {}, sleep: async () => {} }),
+        /cancelled in the browser/
+    );
 });
 
-test('sends anything but six digits as a recovery code', async () => {
-    const { calls, fetchImpl } = fakeServer({
-        '/api/login': () => ({ body: { two_factor_required: true }, cookies: ['PHPSESSID=p'] }),
-        '/api/login/2fa': () => ({ body: { ok: true }, cookies: ['PHPSESSID=s'] }),
-        '/api/tokens': () => ({ status: 201, body: { token: 't' } }),
-        '/api/logout': () => ({ body: {} })
-    });
-
-    await loginWithPassword({ server: 'http://s', email: 'a', password: 'b', fetchImpl, promptCode: async () => 'abcd-efgh' });
-    assert.deepEqual(calls[1].body, { recovery_code: 'abcd-efgh' });
+test('stops when the code expires', async () => {
+    const { fetchImpl } = fakeServer(['expired_token']);
+    await assert.rejects(
+        loginWithBrowser({ server: 'http://s', fetchImpl, onCode: () => {}, sleep: async () => {} }),
+        /expired/
+    );
 });

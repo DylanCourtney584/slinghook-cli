@@ -10,6 +10,7 @@ Requires Node 18.17+. There are no dependencies.
 npm install -g slinghook
 
 slinghook login --server https://slinghook.co.za
+slinghook status               # who you're logged in as
 slinghook endpoints            # list your endpoint UUIDs
 slinghook listen <uuid> --forward http://localhost:3000/webhooks
 ```
@@ -24,15 +25,21 @@ slinghook listen <uuid> --forward http://localhost:3000/webhooks
 
 ## How it works
 
-1. **Auth.** `slinghook login` signs in with your email and password,
-   creates a personal API token (`POST /api/tokens`), and signs that session out.
-   If the account has two-factor sign-in, it asks for the code (or a recovery code).
-   Accounts that sign in with Google, GitHub or SAML have no password: create a
-   token in the dashboard and use `slinghook login --token shk_…`.
+1. **Auth.** `slinghook login` works like `gh auth login`. It asks how you want
+   to log in:
+   - **Web browser.** The CLI shows a one-time code (like `BCDF-GHJK`) and opens
+     the dashboard. Sign in there however you normally do (password, Google,
+     GitHub, SAML, two-factor) and approve the code. The CLI then receives a new
+     API token named after your computer. The token works in the workspace you
+     approved it from. `--web` skips the question. Codes expire after 15 minutes.
+   - **Personal access token.** Create one under **User Settings → API Tokens**
+     (`/app/?settings=tokens`) and paste it. In scripts and CI use
+     `slinghook login --with-token < token.txt`, `--token shk_…`, or set
+     `SLINGHOOK_TOKEN`.
+
    Only the token is saved, in `~/.config/slinghook/config.json` (mode 0600).
-   The server stores only a SHA-256 hash of the token. Use `--token shk_…` or
-   `SLINGHOOK_TOKEN` to skip the prompt, for example in CI. You can create,
-   view, and revoke tokens under **User Settings → API Tokens** in the dashboard.
+   The server stores only a SHA-256 hash of it. You can see and revoke tokens
+   under **User Settings → API Tokens**.
 2. **Stream.** `listen` opens `GET /v1/events/<uuid>` with
    `Authorization: Bearer <token>`. This is the same SSE stream the dashboard uses.
    On first connect the server sends recent `history`, which the CLI skips. It

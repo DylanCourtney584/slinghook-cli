@@ -1,72 +1,79 @@
+import { spawn } from 'node:child_process';
 import { hostname } from 'node:os';
 import { createApi } from './api.js';
 
 /**
- * Exchanges email + password for a long-lived API token.
+ * Browser sign-in, like `gh auth login --web`: the server issues a one-time
+ * code, the person approves it in the dashboard (signing in however they
+ * normally do, 2FA included), and polling then returns a new API token.
  *
- * Signs in with a throwaway session, mints a token with it, then signs that
- * session out, so only the token is ever stored. With two-factor sign-in on,
- * `promptCode` is asked for the authenticator (or recovery) code.
+ * @param {object} opts
+ * @param {(info: {userCode: string, url: string, urlWithCode: string}) => Promise<void>|void} opts.onCode
+ *        Show the code and open the browser
+ * @param {(ms: number) => Promise<void>} [opts.sleep]
  */
-export async function loginWithPassword({ server, email, password, promptCode, fetchImpl = fetch }) {
-    const anon = createApi({ server, fetchImpl });
-    const { data, res } = await anon.postRaw('/api/login', { email, password });
+export async function loginWithBrowser({ server, onCode, fetchImpl = fetch, sleep = defaultSleep }) {
+    const api = createApi({ server, fetchImpl });
+    const start = await api.post('/api/cli/login/start', { client_name: `CLI on ${hostname()}` });
 
-    let cookie = sessionCookie(res.headers);
-    if (!cookie) {
-        throw new Error('Login succeeded but the server did not return a session cookie');
+    await onCode({
+        userCode: start.user_code,
+        url: start.verification_uri,
+        urlWithCode: start.verification_uri_complete ?? start.verification_uri
+    });
+
+    let intervalMs = Math.max(1, Number(start.interval) || 5) * 1000;
+    const deadline = Date.now() + (Number(start.expires_in) || 900) * 1000;
+
+    while (Date.now() < deadline) {
+        await sleep(intervalMs);
+        try {
+            const done = await api.post('/api/cli/login/poll', { device_code: start.device_code });
+            return { token: done.token, email: done.user?.email ?? null };
+        } catch (err) {
+            if (err.message === 'authorization_pending') continue;
+            if (err.message === 'slow_down') {
+                intervalMs += 5000;
+                continue;
+            }
+            if (err.message === 'access_denied') throw new Error('The sign-in was cancelled in the browser.');
+            if (err.message === 'expired_token') throw new Error('The code expired. Run `slinghook login` again.');
+            if (err.message === 'token_limit') throw new Error('You have too many API tokens. Revoke an unused one under User Settings > API Tokens.');
+            throw err;
+        }
     }
 
-    if (data?.two_factor_required) {
-        if (!promptCode) throw new Error('This account uses two-factor sign-in; pass --token instead');
-        const code = String(await promptCode()).replace(/\s+/g, '');
-        // Six digits is an authenticator code; anything else is a recovery code
-        const body = /^\d{6}$/.test(code) ? { code } : { recovery_code: code };
-        const verified = await createApi({ server, cookie, fetchImpl }).postRaw('/api/login/2fa', body);
-        cookie = sessionCookie(verified.res.headers, cookie) ?? cookie;
+    throw new Error('The code expired. Run `slinghook login` again.');
+}
+
+/**
+ * Opens a URL in the default browser. Returns false when that isn't possible
+ * (no desktop, e.g. over SSH), so the caller can just print the link.
+ */
+export function openBrowser(url) {
+    const [command, args] = process.platform === 'win32'
+        ? ['rundll32', ['url.dll,FileProtocolHandler', url]]
+        : process.platform === 'darwin'
+            ? ['open', [url]]
+            : ['xdg-open', [url]];
+
+    try {
+        const child = spawn(command, args, { stdio: 'ignore', detached: true, windowsHide: true });
+        child.on('error', () => {});
+        child.unref();
+        return true;
+    } catch {
+        return false;
     }
+}
 
-    const session = createApi({ server, cookie, fetchImpl });
-    const created = await session.post('/api/tokens', { name: `CLI on ${hostname()}` });
-    await session.post('/api/logout').catch(() => {});
-
-    return created.token;
+function defaultSleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export async function verifyToken({ server, token, fetchImpl = fetch }) {
     const data = await createApi({ server, token, fetchImpl }).get('/api/me');
     return data?.user ?? null;
-}
-
-/**
- * The Cookie header to send back, from a response's Set-Cookie headers.
- *
- * Each sign-in step renews the session id, so later responses replace
- * cookies from earlier ones; like a browser, keep the last value of each name.
- */
-export function sessionCookie(headers, previous = null) {
-    const raw = typeof headers.getSetCookie === 'function'
-        ? headers.getSetCookie()
-        : [headers.get('set-cookie')].filter(Boolean);
-    if (raw.length === 0) return previous;
-
-    const jar = new Map();
-    for (const pair of (previous ?? '').split('; ').filter(Boolean)) {
-        const eq = pair.indexOf('=');
-        jar.set(pair.slice(0, eq), pair.slice(eq + 1));
-    }
-    for (const cookie of raw) {
-        const pair = cookie.split(';')[0].trim();
-        const eq = pair.indexOf('=');
-        if (eq <= 0) continue;
-        const name = pair.slice(0, eq);
-        const value = pair.slice(eq + 1);
-        // An expired or emptied cookie is the server deleting it
-        if (value === '' || value === 'deleted' || /;\s*max-age=0\b/i.test(cookie)) jar.delete(name);
-        else jar.set(name, value);
-    }
-
-    return [...jar].map(([name, value]) => `${name}=${value}`).join('; ') || null;
 }
 
 /**
