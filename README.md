@@ -13,6 +13,7 @@ slinghook login --server https://slinghook.co.za
 slinghook status               # who you're logged in as
 slinghook endpoints            # list your endpoint UUIDs
 slinghook listen <uuid> --forward http://localhost:3000/webhooks
+# <uuid> can also be the catch URL you copied, e.g. https://slinghook.co.za/v1/catch/<uuid>
 ```
 
 ```

@@ -69,6 +69,9 @@ export async function listen({
         if (res.status === 403 || res.status === 400) {
             throw new Error(`Endpoint ${endpointUuid} was not found on your account.`);
         }
+        if (res.status === 404) {
+            throw new Error(`${server} has no event stream for ${endpointUuid}. Check the endpoint and your --server.`);
+        }
         if (!res.ok || !res.body) {
             logger.warn(`Stream returned HTTP ${res.status}. Retrying in ${backoffMs / 1000}s`);
             await sleep(backoffMs, signal);

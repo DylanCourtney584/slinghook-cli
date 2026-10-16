@@ -6,6 +6,7 @@ import { loginWithBrowser, openBrowser, verifyToken, promptHidden } from '../src
 import { listen } from '../src/listen.js';
 import { createApi } from '../src/api.js';
 import { parseClaim, saveClaim, describeClaim } from '../src/claims.js';
+import { resolveEndpointUuid } from '../src/endpoint.js';
 
 const HELP = `slinghook — forward SlingHook webhooks to your local server
 
@@ -13,7 +14,7 @@ Usage:
   slinghook login [--server URL] [--web | --with-token | --token shk_...]
   slinghook status
   slinghook endpoints
-  slinghook listen <endpoint-uuid> --forward <url> [--retries N] [--no-report]
+  slinghook listen <endpoint-uuid|catch-url> --forward <url> [--retries N] [--no-report]
                    [--mine] [--claim FIELD=VALUE ...]
   slinghook logout
 
@@ -175,8 +176,8 @@ async function listEndpoints(config) {
     }
 }
 
-async function runListen(config, endpointUuid, values) {
-    if (!endpointUuid) throw new Error('Missing endpoint UUID. Run `slinghook endpoints` to list yours.');
+async function runListen(config, endpoint, values) {
+    if (!endpoint) throw new Error('Missing endpoint UUID. Run `slinghook endpoints` to list yours.');
     if (!values.forward) throw new Error('Missing --forward <url>, e.g. --forward http://localhost:3000/webhooks');
 
     let target;
@@ -192,6 +193,7 @@ async function runListen(config, endpointUuid, values) {
     }
 
     const claims = (values.claim ?? []).map(parseClaim);
+    const endpointUuid = await resolveEndpointUuid(createApi(config), endpoint);
     if (claims.length > 0) {
         await saveClaim(createApi(config), endpointUuid, claims);
         console.log(`Claimed events where ${describeClaim(claims)}`);
