@@ -5,15 +5,25 @@ import { createApi } from './api.js';
  * Exchanges email + password for a long-lived API token.
  *
  * Signs in with a throwaway session, mints a token with it, then signs that
- * session out, so only the token is ever stored.
+ * session out, so only the token is ever stored. With two-factor sign-in on,
+ * `promptCode` is asked for the authenticator (or recovery) code.
  */
-export async function loginWithPassword({ server, email, password, fetchImpl = fetch }) {
+export async function loginWithPassword({ server, email, password, promptCode, fetchImpl = fetch }) {
     const anon = createApi({ server, fetchImpl });
-    const { res } = await anon.postRaw('/api/login', { email, password });
+    const { data, res } = await anon.postRaw('/api/login', { email, password });
 
-    const cookie = sessionCookie(res.headers);
+    let cookie = sessionCookie(res.headers);
     if (!cookie) {
         throw new Error('Login succeeded but the server did not return a session cookie');
+    }
+
+    if (data?.two_factor_required) {
+        if (!promptCode) throw new Error('This account uses two-factor sign-in; pass --token instead');
+        const code = String(await promptCode()).replace(/\s+/g, '');
+        // Six digits is an authenticator code; anything else is a recovery code
+        const body = /^\d{6}$/.test(code) ? { code } : { recovery_code: code };
+        const verified = await createApi({ server, cookie, fetchImpl }).postRaw('/api/login/2fa', body);
+        cookie = sessionCookie(verified.res.headers, cookie) ?? cookie;
     }
 
     const session = createApi({ server, cookie, fetchImpl });
@@ -28,12 +38,35 @@ export async function verifyToken({ server, token, fetchImpl = fetch }) {
     return data?.user ?? null;
 }
 
-function sessionCookie(headers) {
+/**
+ * The Cookie header to send back, from a response's Set-Cookie headers.
+ *
+ * Each sign-in step renews the session id, so later responses replace
+ * cookies from earlier ones; like a browser, keep the last value of each name.
+ */
+export function sessionCookie(headers, previous = null) {
     const raw = typeof headers.getSetCookie === 'function'
         ? headers.getSetCookie()
         : [headers.get('set-cookie')].filter(Boolean);
+    if (raw.length === 0) return previous;
 
-    return raw.map((c) => c.split(';')[0]).join('; ') || null;
+    const jar = new Map();
+    for (const pair of (previous ?? '').split('; ').filter(Boolean)) {
+        const eq = pair.indexOf('=');
+        jar.set(pair.slice(0, eq), pair.slice(eq + 1));
+    }
+    for (const cookie of raw) {
+        const pair = cookie.split(';')[0].trim();
+        const eq = pair.indexOf('=');
+        if (eq <= 0) continue;
+        const name = pair.slice(0, eq);
+        const value = pair.slice(eq + 1);
+        // An expired or emptied cookie is the server deleting it
+        if (value === '' || value === 'deleted' || /;\s*max-age=0\b/i.test(cookie)) jar.delete(name);
+        else jar.set(name, value);
+    }
+
+    return [...jar].map(([name, value]) => `${name}=${value}`).join('; ') || null;
 }
 
 /**

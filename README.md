@@ -26,6 +26,9 @@ slinghook listen <uuid> --forward http://localhost:3000/webhooks
 
 1. **Auth.** `slinghook login` signs in with your email and password,
    creates a personal API token (`POST /api/tokens`), and signs that session out.
+   If the account has two-factor sign-in, it asks for the code (or a recovery code).
+   Accounts that sign in with Google, GitHub or SAML have no password: create a
+   token in the dashboard and use `slinghook login --token shk_…`.
    Only the token is saved, in `~/.config/slinghook/config.json` (mode 0600).
    The server stores only a SHA-256 hash of the token. Use `--token shk_…` or
    `SLINGHOOK_TOKEN` to skip the prompt, for example in CI. You can create,

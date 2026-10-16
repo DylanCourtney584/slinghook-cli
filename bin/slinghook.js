@@ -81,7 +81,17 @@ async function login(config, token) {
         const email = (await rl.question(`Email for ${config.server}: `)).trim();
         rl.close();
         const password = await promptHidden('Password: ');
-        token = await loginWithPassword({ server: config.server, email, password });
+        token = await loginWithPassword({
+            server: config.server,
+            email,
+            password,
+            promptCode: async () => {
+                const codeRl = createInterface({ input: process.stdin, output: process.stdout });
+                const code = await codeRl.question('Two-factor code (or a recovery code): ');
+                codeRl.close();
+                return code;
+            }
+        });
     }
 
     const user = await verifyToken({ server: config.server, token });
