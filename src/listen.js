@@ -16,6 +16,7 @@ const MAX_BACKOFF_MS = 30_000;
  * @param {string} opts.token
  * @param {string} opts.endpointUuid
  * @param {string} opts.target
+ * @param {boolean} [opts.mine=false]    Team routing: only events routed to you, and show you as online
  * @param {boolean} [opts.report=true]   Record each delivery in the dashboard's replay history
  * @param {number} [opts.retries=3]      Extra tries when the local server is down or answers 5xx
  * @param {number} [opts.retryBaseMs=1000] First retry wait; each later wait doubles (max 30s)
@@ -28,6 +29,7 @@ export async function listen({
     token,
     endpointUuid,
     target,
+    mine = false,
     report = true,
     retries = 3,
     retryBaseMs = 1_000,
@@ -51,7 +53,8 @@ export async function listen({
             const headers = { Accept: 'text/event-stream', Authorization: `Bearer ${token}` };
             if (lastEventId) headers['Last-Event-ID'] = lastEventId;
 
-            res = await fetchImpl(`${server}/v1/events/${endpointUuid}`, { headers, signal });
+            const query = mine ? '?claimed=mine' : '';
+            res = await fetchImpl(`${server}/v1/events/${endpointUuid}${query}`, { headers, signal });
         } catch (err) {
             if (signal?.aborted) break;
             logger.warn(`Connection failed: ${err.cause?.message || err.message}. Retrying in ${backoffMs / 1000}s`);
@@ -74,7 +77,7 @@ export async function listen({
         }
 
         if (!primed) {
-            logger.ready(endpointUuid, target);
+            logger.ready(endpointUuid, target, { mine });
         }
         backoffMs = 1_000;
 
@@ -178,8 +181,9 @@ export function consoleLogger() {
     const time = () => dim(new Date().toLocaleTimeString());
 
     return {
-        ready(uuid, target) {
+        ready(uuid, target, { mine = false } = {}) {
             console.log(`${cyan('●')} Listening on endpoint ${uuid}`);
+            if (mine) console.log('  Receiving only events routed to you (team routing)');
             console.log(`  Forwarding to ${target}`);
             console.log(dim('  Press Ctrl+C to stop\n'));
         },

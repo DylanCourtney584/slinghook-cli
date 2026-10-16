@@ -175,3 +175,30 @@ test('does not retry an answer the app gave on purpose', async () => {
     assert.equal(isRetryable({ status: 400, error: null }), false);
     assert.equal(isRetryable({ status: 200, error: null }), false);
 });
+
+test('in mine mode, asks the stream for only the events routed to you', async () => {
+    const paths = [];
+    let readyMine = null;
+    const controller = new AbortController();
+    const slinghook = await startServer((req, res) => {
+        paths.push(req.url);
+        res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+        res.write(': heartbeat\n\n');
+        setTimeout(() => controller.abort(), 50);
+    });
+
+    await listen({
+        server: url(slinghook),
+        token: 'shk_test',
+        endpointUuid: 'abc',
+        target: 'http://localhost:1/',
+        mine: true,
+        report: false,
+        logger: { ready(_uuid, _target, opts) { readyMine = opts?.mine; }, delivered() {}, skipped() {}, warn() {} },
+        signal: controller.signal
+    });
+
+    slinghook.close();
+    assert.deepEqual(paths, ['/v1/events/abc?claimed=mine']);
+    assert.equal(readyMine, true);
+});

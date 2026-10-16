@@ -5,6 +5,7 @@ import { loadConfig, saveConfig, stripTrailingSlash } from '../src/config.js';
 import { loginWithPassword, verifyToken, promptHidden } from '../src/login.js';
 import { listen } from '../src/listen.js';
 import { createApi } from '../src/api.js';
+import { parseClaim, saveClaim, describeClaim } from '../src/claims.js';
 
 const HELP = `slinghook — forward SlingHook webhooks to your local server
 
@@ -12,6 +13,7 @@ Usage:
   slinghook login [--server URL] [--token shk_...]
   slinghook endpoints
   slinghook listen <endpoint-uuid> --forward <url> [--retries N] [--no-report]
+                   [--mine] [--claim FIELD=VALUE ...]
   slinghook logout
 
 Options:
@@ -21,6 +23,12 @@ Options:
   --retries N      Extra tries when your local server is down or answers 5xx
                    (default 3, waiting 1s, 2s, 4s; 0 turns retries off)
   --no-report      Don't record deliveries in the dashboard's replay history
+  --mine           Team routing (Team plan): forward only the events routed to
+                   you, and count you as online for "whoever is online"
+  --claim SPEC     Save your claim on this endpoint first (implies --mine).
+                   SPEC is a body path, header: or query: then =value, e.g.
+                   data.object.metadata.dev=alice or header:X-Dev=alice.
+                   Repeat it to require several conditions.
 
 Environment:
   SLINGHOOK_SERVER, SLINGHOOK_TOKEN override the saved config.
@@ -36,6 +44,8 @@ async function main(argv) {
             forward: { type: 'string', short: 'f' },
             'no-report': { type: 'boolean', default: false },
             retries: { type: 'string' },
+            mine: { type: 'boolean', default: false },
+            claim: { type: 'string', multiple: true },
             help: { type: 'boolean', short: 'h' }
         }
     });
@@ -107,6 +117,12 @@ async function runListen(config, endpointUuid, values) {
         throw new Error('--retries must be a whole number from 0 to 10');
     }
 
+    const claims = (values.claim ?? []).map(parseClaim);
+    if (claims.length > 0) {
+        await saveClaim(createApi(config), endpointUuid, claims);
+        console.log(`Claimed events where ${describeClaim(claims)}`);
+    }
+
     const controller = new AbortController();
     process.once('SIGINT', () => {
         console.log('\nStopping…');
@@ -118,6 +134,7 @@ async function runListen(config, endpointUuid, values) {
         token: config.token,
         endpointUuid,
         target,
+        mine: values.mine || claims.length > 0,
         report: !values['no-report'],
         retries,
         signal: controller.signal

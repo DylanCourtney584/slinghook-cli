@@ -43,6 +43,7 @@ export function createApi({ server, token = null, cookie = null, fetchImpl = fet
     return {
         get: (path) => request('GET', path).then((r) => r.data),
         post: (path, body) => request('POST', path, body).then((r) => r.data),
+        put: (path, body) => request('PUT', path, body).then((r) => r.data),
         postRaw: (path, body) => request('POST', path, body)
     };
 }

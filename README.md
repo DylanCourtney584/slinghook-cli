@@ -49,6 +49,32 @@ slinghook listen <uuid> --forward http://localhost:3000/webhooks
 5. **Report.** Each result is posted to `POST /api/logs/<id>/replays`, so it
    appears in the dashboard's replay history. Use `--no-report` to turn this off.
 
+## Team routing: one provider URL, many developers
+
+On the Team plan, a whole team can share one endpoint (Stripe and Shopify only
+allow a few webhook URLs) and still each get their own events on their own
+machine. Claim the events that are yours, then listen with `--mine`:
+
+```bash
+# Events whose body has metadata.dev = "alice" go to Alice's localhost
+slinghook listen <uuid> --forward http://localhost:3000/webhooks \
+  --claim data.object.metadata.dev=alice
+
+# Or claim by a header or query parameter
+slinghook listen <uuid> --forward http://localhost:3000/webhooks --claim header:X-Dev=alice
+```
+
+`--claim` saves your claim on the endpoint (replacing your earlier one) and
+implies `--mine`. Repeat it to require several conditions. You can also edit
+claims under **Endpoint Settings → Team routing** in the dashboard, then run
+`listen --mine` without `--claim`.
+
+With `--mine`, the CLI forwards only the events routed to you, and the open
+stream counts you as online. Events nobody claims stay in the shared feed for
+everyone to see, unless the endpoint is set to give them to whoever is online,
+in which case they go round-robin to the people running `listen --mine`.
+Viewers can watch but can't claim events.
+
 Don't run the CLI and the dashboard's Auto-Relay toggle for the same endpoint at
 the same time, or each webhook will be delivered twice.
 
