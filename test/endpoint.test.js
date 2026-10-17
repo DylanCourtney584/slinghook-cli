@@ -12,6 +12,7 @@ test('accepts a bare uuid or a catch URL', () => {
 
 test('reads a reserved URL or slug', () => {
     assert.deepEqual(parseEndpointRef('https://slinghook.co.za/v1/catch/stripe-dev'), { slug: 'stripe-dev' });
+    assert.deepEqual(parseEndpointRef('https://slinghook.co.za/c/stripe-dev'), { slug: 'stripe-dev' });
     assert.deepEqual(parseEndpointRef('stripe-dev'), { slug: 'stripe-dev' });
     assert.throws(() => parseEndpointRef('https://example.com/a/b'), /not an endpoint/);
 });
