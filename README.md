@@ -4,7 +4,7 @@ Forwards webhooks captured by a SlingHook server to a server on your machine,
 such as `localhost:3000`. A hosted SlingHook instance can't reach your localhost,
 so the CLI makes the connection outbound, the same way `stripe listen` does.
 
-Requires Node 18.17+. There are no dependencies.
+Requires Node 20.17+.
 
 ```bash
 npm install -g slinghook
