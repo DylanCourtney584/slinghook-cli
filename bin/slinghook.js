@@ -5,6 +5,7 @@ import { select } from '@inquirer/prompts';
 import { loadConfig, saveConfig, stripTrailingSlash } from '../src/config.js';
 import { loginWithBrowser, openBrowser, verifyToken, promptHidden } from '../src/login.js';
 import { listen } from '../src/listen.js';
+import { runChaos } from '../src/chaos.js';
 import { createApi } from '../src/api.js';
 import { parseClaim, saveClaim, describeClaim } from '../src/claims.js';
 import { resolveEndpointUuid } from '../src/endpoint.js';
@@ -29,6 +30,8 @@ ${bold('Usage:')}
   slinghook ${cyan('endpoints')}
   slinghook ${cyan('listen')}    <endpoint-uuid|catch-url> --forward <url> [--retries N] [--no-report]
                         [--mine] [--claim FIELD=VALUE ...]
+  slinghook ${cyan('chaos')}     <endpoint-uuid|catch-url> --forward <url> (--scenario ID | --request ID)
+                        [--check URL] [--only TESTS] [--late-delay SECONDS]
   slinghook ${cyan('logout')}
 
 ${bold('Options:')}
@@ -42,6 +45,16 @@ ${bold('Options:')}
   --mine           Team routing: forward only events routed to you
   --claim SPEC     Save a claim on this endpoint first (implies --mine)
                    e.g. data.object.metadata.dev=alice or header:X-Dev=alice
+
+${bold('Chaos mode')} ${dim('(Pro and Team): re-sends captured webhooks to your handler as duplicates,')}
+${dim('concurrent duplicates, out of order, late retries and with broken bodies, then reports how it coped.')}
+  --scenario ID    Saved scenario to use (run without it to list them)
+  --request ID     A single captured request to use instead
+  --check URL      GET on your app that shows its state (e.g. an order count); read after
+                   each test to prove redeliveries changed nothing
+  --only TESTS     Comma-separated: duplicates,concurrent,out_of_order,malformed,late_retry
+  --late-delay S   Seconds to wait before the late retry (default: 5)
+  Exits with code 1 when a test fails, so it can run in CI.
 
 ${bold('Environment:')}
   ${dim('SLINGHOOK_SERVER, SLINGHOOK_TOKEN override the saved configuration.')}
@@ -61,6 +74,11 @@ async function main(argv) {
             retries: { type: 'string' },
             mine: { type: 'boolean', default: false },
             claim: { type: 'string', multiple: true },
+            scenario: { type: 'string' },
+            request: { type: 'string' },
+            check: { type: 'string' },
+            only: { type: 'string' },
+            'late-delay': { type: 'string' },
             help: { type: 'boolean', short: 'h' }
         }
     });
@@ -88,6 +106,8 @@ async function main(argv) {
             return listEndpoints(requireToken(config));
         case 'listen':
             return runListen(requireToken(config), rest[0], values);
+        case 'chaos':
+            return runChaosCommand(requireToken(config), rest[0], values);
         default:
             throw new Error(`Unknown command "${command}". Run slinghook --help`);
     }
@@ -224,6 +244,99 @@ async function runListen(config, endpoint, values) {
         retries,
         signal: controller.signal
     });
+}
+
+const CHAOS_ICON = { pass: green('✓'), warn: yellow('!'), fail: red('✗'), skipped: dim('–') };
+
+async function runChaosCommand(config, endpoint, values) {
+    if (!endpoint) throw new Error('Missing endpoint UUID. Run `slinghook endpoints` to list yours.');
+    if (!values.forward) throw new Error('Missing --forward <url>, e.g. --forward http://localhost:3000/webhooks');
+
+    const target = parseUrlOption(values.forward, '--forward');
+    const checkUrl = values.check ? parseUrlOption(values.check, '--check') : null;
+    const api = createApi(config);
+    const endpointUuid = await resolveEndpointUuid(api, endpoint);
+
+    if (!values.scenario && !values.request) {
+        const { scenarios = [] } = await api.get(`/api/scenarios?endpoint=${encodeURIComponent(endpointUuid)}`);
+        if (scenarios.length === 0) {
+            throw new Error('This endpoint has no scenarios. Save one in the dashboard, or pass --request <id> to use one captured request.');
+        }
+        console.log(`\nScenarios on this endpoint:\n`);
+        for (const s of scenarios) console.log(`  ${cyan(String(s.id).padStart(5))}  ${s.name} ${dim(`(${s.step_count} requests)`)}`);
+        console.log(`\n${dim('Run one with')} slinghook chaos ${endpoint} --forward ${target} --scenario <id>\n`);
+        process.exitCode = 1;
+        return;
+    }
+
+    let lateDelayMs;
+    if (values['late-delay'] !== undefined) {
+        const seconds = Number(values['late-delay']);
+        if (!Number.isFinite(seconds) || seconds < 0 || seconds > 60) throw new Error('--late-delay must be 0 to 60 seconds');
+        lateDelayMs = Math.round(seconds * 1000);
+    }
+
+    const controller = new AbortController();
+    process.once('SIGINT', () => {
+        console.log(`\n${dim('Stopping…')}`);
+        controller.abort();
+    });
+
+    let currentTest = null;
+    const run = await runChaos({
+        api,
+        signal: controller.signal,
+        run: {
+            endpoint: endpointUuid,
+            scenario_id: values.scenario ? Number(values.scenario) : undefined,
+            log_id: values.request ? Number(values.request) : undefined,
+            target_url: target,
+            check_url: checkUrl ?? undefined,
+            tests: values.only ? values.only.split(',').map((t) => t.trim()).filter(Boolean) : undefined,
+            late_delay_ms: lateDelayMs
+        },
+        logger: {
+            started(run) {
+                console.log(`\n${cyan('●')} Chaos testing ${bold(run.name)} against ${target}`);
+                if (!checkUrl) console.log(dim('  Tip: add --check <url> so the report can prove redeliveries changed nothing'));
+                console.log();
+            },
+            waiting(round, ms) {
+                console.log(dim(`  waiting ${ms / 1000}s before the late retry…`));
+            },
+            round(i, round, answers) {
+                if (round.test !== currentTest) {
+                    currentTest = round.test;
+                    console.log(`  ${bold(round.test.replace(/_/g, ' '))}`);
+                }
+                const codes = answers.map((a) => (a.error ? red(a.error) : (a.status < 300 ? green : a.status < 500 ? yellow : red)(String(a.status))));
+                const variant = round.shots[0].variant ? dim(` ${round.shots[0].variant}`) : '';
+                console.log(`    ${dim(`#${round.shots[0].log_id}`)}${variant}  ${codes.join(dim(' · '))}`);
+            }
+        }
+    });
+
+    const report = run.report;
+    console.log(`\n${bold('Report')}\n`);
+    for (const test of report.tests) {
+        const icon = CHAOS_ICON[test.verdict] ?? dim('○');
+        const state = test.state === 'unchanged' ? dim(' · state unchanged') : test.state === 'changed' ? red(' · state changed') : '';
+        console.log(`  ${icon} ${test.title}${state}${test.reason ? dim(` (${test.reason})`) : ''}`);
+        for (const finding of test.findings ?? []) console.log(`      ${dim(finding)}`);
+    }
+    if (report.stopped_reason) console.log(`\n${yellow('!')} ${report.stopped_reason}`);
+
+    const color = { passed: green, warned: yellow, failed: red, stopped: yellow }[run.status] ?? dim;
+    console.log(`\n${color(run.status.toUpperCase())} ${dim(`· ${report.passed} passed, ${report.warned} warnings, ${report.failed} failed · saved to the dashboard`)}\n`);
+    if (run.status === 'failed') process.exitCode = 1;
+}
+
+function parseUrlOption(value, flag) {
+    try {
+        return new URL(value).toString();
+    } catch {
+        throw new Error(`${flag} is not a valid URL: ${value}`);
+    }
 }
 
 async function choose(question, options) {

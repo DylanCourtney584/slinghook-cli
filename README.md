@@ -89,6 +89,37 @@ Viewers can watch but can't claim events.
 Don't run the CLI and the dashboard's Auto-Relay toggle for the same endpoint at
 the same time, or each webhook will be delivered twice.
 
+## Chaos mode: is your handler idempotent?
+
+On Pro and Team, `slinghook chaos` takes a saved scenario (or one captured
+request) and sends it to your handler the way providers really behave:
+
+```bash
+slinghook chaos <uuid> --forward http://localhost:3000/webhooks --scenario 12 \
+  --check http://localhost:3000/debug/orders/count
+```
+
+Each event is first sent once (the baseline). Then, in order:
+
+| Test | What is sent | Pass |
+| --- | --- | --- |
+| duplicates | every event again | 2xx |
+| concurrent | the same event 3 times at the same moment | 2xx for all |
+| out_of_order | the events again, newest first | 2xx, or 409/425/429/503 to ask for a retry |
+| malformed | the first body cut in half, empty, and garbage | 4xx |
+| late_retry | the first event again after `--late-delay` seconds | 2xx |
+
+Deliveries are sent exactly as captured, signature included, without the
+`X-Webhook-Replay` header, so your handler treats them like the provider's own
+redeliveries. Status codes can't show double side effects, so pass `--check`
+with a GET on your app that reflects its state (an order count, a balance). It
+is read after the baseline and after each test; any change fails that test.
+
+Pick tests with `--only duplicates,concurrent`. Run without `--scenario` to
+list the endpoint's scenarios. The report is saved to the dashboard (⌘K →
+"Chaos mode"), and the command exits with code 1 when a test fails, so it can
+run in CI.
+
 ## Known gaps
 
 - Bodies travel through the JSON event stream as text, so binary payloads aren't

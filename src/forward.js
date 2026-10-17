@@ -24,13 +24,14 @@ const MAX_RESPONSE_BODY = 10_000;
  * @param {string} target   e.g. http://localhost:3000/webhooks
  * @param {object} [opts]
  * @param {number} [opts.timeoutMs=15000]
+ * @param {boolean} [opts.markReplay=true]  false sends it exactly like the provider did (chaos mode)
  * @param {typeof fetch} [opts.fetchImpl]
  * @returns {Promise<{url: string, status: ?number, body: ?string, error: ?string, durationMs: number}>}
  */
-export async function forwardLog(log, target, { timeoutMs = 15_000, fetchImpl = fetch } = {}) {
+export async function forwardLog(log, target, { timeoutMs = 15_000, markReplay = true, fetchImpl = fetch } = {}) {
     const url = buildTargetUrl(target, parseJson(log.query_params, {}));
     const method = String(log.method || 'POST').toUpperCase();
-    const headers = buildHeaders(parseJson(log.headers, {}), log.content_type, log.id);
+    const headers = buildHeaders(parseJson(log.headers, {}), log.content_type, log.id, markReplay);
     const body = method === 'GET' || method === 'HEAD' ? undefined : (log.body ?? undefined);
 
     const startedAt = performance.now();
@@ -70,7 +71,7 @@ export function isRetryable(result) {
     return [408, 425, 429].includes(result.status) || result.status >= 500;
 }
 
-export function buildHeaders(original, contentType, logId) {
+export function buildHeaders(original, contentType, logId, markReplay = true) {
     const headers = {};
     for (const [name, value] of Object.entries(original || {})) {
         if (!STRIP_HEADERS.has(name.toLowerCase())) {
@@ -83,8 +84,10 @@ export function buildHeaders(original, contentType, logId) {
         headers['Content-Type'] = contentType;
     }
 
-    headers['X-Webhook-Replay'] = 'true';
-    headers['X-SlingHook-Log-Id'] = String(logId);
+    if (markReplay) {
+        headers['X-Webhook-Replay'] = 'true';
+        headers['X-SlingHook-Log-Id'] = String(logId);
+    }
     return headers;
 }
 

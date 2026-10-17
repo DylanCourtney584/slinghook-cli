@@ -1,6 +1,6 @@
 {
   "name": "slinghook",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Forward SlingHook webhooks to your local dev server",
   "keywords": [
     "webhook",
