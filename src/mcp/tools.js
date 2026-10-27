@@ -2,7 +2,7 @@ import { isIP } from 'node:net';
 import { ApiError } from '../api.js';
 import { resolveEndpointUuid } from '../endpoint.js';
 import { forwardLog } from '../forward.js';
-import { findBaseline, isPassing, verdictFor } from './verdict.js';
+import { expectsRejection, findBaseline, isPassing, verdictFor } from './verdict.js';
 
 const DEFAULT_BODY_CHARS = 20_000;
 const MAX_BODY_CHARS = 200_000;
@@ -181,7 +181,7 @@ export function createTools({ api, server, allowRemoteTargets = false, fetchImpl
             name: 'replay_event',
             title: 'Replay event',
             description: 'Re-sends a captured webhook to a URL from this machine (e.g. the local handler at http://localhost:3000/webhooks), with its original method, headers and body, so signature checks run for real. '
-                + 'Records the result in the dashboard\'s replay history and returns the verdict against the previous attempt to the same URL: fixed, regressed, still_failing or still_passing. '
+                + 'Records the result in the dashboard\'s replay history and returns the verdict against the previous attempt to the same URL: fixed, regressed, still_failing or still_passing. For an event whose signature is invalid, the handler passes by rejecting it (4xx). '
                 + 'It can change state in the receiving app (it is a real webhook delivery).',
             inputSchema: {
                 type: 'object',
@@ -208,6 +208,7 @@ export function createTools({ api, server, allowRemoteTargets = false, fetchImpl
                 }
 
                 const result = await forwardLog(log, target, { fetchImpl });
+                const expectRejection = expectsRejection(log);
 
                 let recorded = true;
                 try {
@@ -226,15 +227,11 @@ export function createTools({ api, server, allowRemoteTargets = false, fetchImpl
                     event_id: log.id,
                     delivered_to: result.url,
                     status: result.status,
-                    passed: isPassing({ response_status: result.status, error_message: result.error }),
+                    passed: isPassing({ response_status: result.status, error_message: result.error }, expectRejection),
                     ...(result.error ? { error: result.error } : {}),
                     duration_ms: result.durationMs,
                     response_body: clip(result.body ?? '', RESPONSE_EXCERPT_CHARS).text,
-                    // The verdict counts any 2xx as a pass, which is backwards for a forged or broken signature
-                    ...(log.signature_status === 'invalid' ? {
-                        expected_outcome: 'This event\'s signature is invalid, so a handler that verifies signatures should reject it (4xx). '
-                            + 'Here a 2xx means the handler accepted a bad signature, even though the verdict counts it as passed.'
-                    } : {})
+                    ...(expectRejection ? { expected_outcome: EXPECTED_REJECTION } : {})
                 };
                 if (!recorded) {
                     return { ...outcome, verdict: null, note: 'Delivered, but the result could not be saved to the replay history, so there is no verdict.' };
@@ -243,7 +240,7 @@ export function createTools({ api, server, allowRemoteTargets = false, fetchImpl
                 const { replays = [] } = await api.get(`/api/logs/${log.id}/replays`);
                 const current = replays[0];
                 const baseline = findBaseline(replays, current);
-                return { ...outcome, ...describeVerdict(baseline, current) };
+                return { ...outcome, ...describeVerdict(baseline, current, expectRejection) };
             }
         },
         {
@@ -263,7 +260,11 @@ export function createTools({ api, server, allowRemoteTargets = false, fetchImpl
             annotations: { readOnlyHint: true, openWorldHint: false },
             async handler(args) {
                 const id = eventId(args);
-                const { replays = [], compare_allowed: compareAllowed = false } = await api.get(`/api/logs/${id}/replays`);
+                const [{ replays = [], compare_allowed: compareAllowed = false }, { log }] = await Promise.all([
+                    api.get(`/api/logs/${id}/replays`),
+                    api.get(`/api/logs/${id}`)
+                ]);
+                const expectRejection = expectsRejection(log);
                 if (replays.length === 0) {
                     return { event_id: id, replays: 0, note: 'This event has not been replayed yet. Use replay_event.' };
                 }
@@ -275,11 +276,12 @@ export function createTools({ api, server, allowRemoteTargets = false, fetchImpl
                 return {
                     event_id: id,
                     replays: replays.length,
-                    ...describeVerdict(baseline, current),
-                    attempt: describeAttempt(current, compareAllowed),
-                    ...(baseline ? { compared_with: describeAttempt(baseline, compareAllowed) } : {}),
+                    ...describeVerdict(baseline, current, expectRejection),
+                    ...(expectRejection ? { expected_outcome: EXPECTED_REJECTION } : {}),
+                    attempt: describeAttempt(current, compareAllowed, expectRejection),
+                    ...(baseline ? { compared_with: describeAttempt(baseline, compareAllowed, expectRejection) } : {}),
                     ...(!compareAllowed && baseline ? { note: 'Comparing the two response bodies needs the Pro plan; the verdict is on every plan.' } : {}),
-                    history: replays.slice(0, 10).map((r) => ({ id: r.id, at: r.created_at, target_url: r.target_url, status: r.response_status, passed: isPassing(r) }))
+                    history: replays.slice(0, 10).map((r) => ({ id: r.id, at: r.created_at, target_url: r.target_url, status: r.response_status, passed: isPassing(r, expectRejection) }))
                 };
             }
         }
@@ -308,8 +310,12 @@ function signatureCheck(ep) {
     return ep.signature_scheme ? `on: checks ${ep.signature_scheme} signatures` : 'on: detects the provider (Stripe, GitHub, Shopify, ...) from each request\'s headers';
 }
 
-function describeVerdict(baseline, current) {
-    const verdict = verdictFor(baseline, current);
+// For an invalid signature the verdict flips: refusing it is the correct behaviour
+const EXPECTED_REJECTION = 'This event\'s signature is invalid, so a handler that verifies signatures should reject it. '
+    + 'Here passed means a 4xx; a 2xx means the handler accepted a bad signature and counts as failed.';
+
+function describeVerdict(baseline, current, expectRejection) {
+    const verdict = verdictFor(baseline, current, expectRejection);
     if (!verdict) return { verdict: null, verdict_note: 'First replay to this event, so there is nothing to compare with yet. Replay again after a code change.' };
 
     const explanations = {
@@ -321,13 +327,13 @@ function describeVerdict(baseline, current) {
     return { verdict, verdict_note: explanations[verdict] };
 }
 
-function describeAttempt(attempt, withBody) {
+function describeAttempt(attempt, withBody, expectRejection) {
     return {
         id: attempt.id,
         at: attempt.created_at,
         target_url: attempt.target_url,
         status: attempt.response_status,
-        passed: isPassing(attempt),
+        passed: isPassing(attempt, expectRejection),
         ...(attempt.error_message ? { error: attempt.error_message } : {}),
         duration_ms: attempt.duration_ms,
         ...(withBody ? { response_body: clip(attempt.response_body ?? '', RESPONSE_EXCERPT_CHARS).text } : {})
