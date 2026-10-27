@@ -141,6 +141,7 @@ Catch. Debug. Replay loop:
 | `debug_signature` | Why the signature failed, optionally against a candidate secret | No |
 | `replay_event` | Re-sends the webhook from your machine to your handler, records it, and returns the verdict: fixed, regressed, still failing or still passing | Yes: a real delivery |
 | `get_replay_result` | Replay history and fix verification verdict (both response bodies on Pro) | No |
+| `compare_events` | What differs between two webhooks, field by field (defaults to the previous event of the same type) | No |
 
 Every event has a number within your account (`#12`), shown in the dashboard's
 feed. Name events to your agent however is natural: "event 12", "the latest
