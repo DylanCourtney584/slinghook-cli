@@ -9,7 +9,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { ApiError, createApi } from '../src/api.js';
 import { createMcpServer } from '../src/mcp/server.js';
-import { checkTarget, createTools, explain, isLocalHost } from '../src/mcp/tools.js';
+import { checkTarget, createTools, explain, isLocalHost, MAX_CREATED_ENDPOINTS } from '../src/mcp/tools.js';
 import { expectsRejection, findBaseline, isPassing, verdictFor } from '../src/mcp/verdict.js';
 
 const UUID = '4e6acf98-9df8-49bc-8783-45a4d01d4eef';
@@ -38,6 +38,7 @@ const LOG = {
 /** A pretend SlingHook API that records what it was asked */
 function fakeApi({ plan = 'free', role = 'owner' } = {}) {
     const requests = [];
+    const created = [];
     const replays = [{ id: 1, log_id: 42, target_url: 'http://127.0.0.1:1/hook', response_status: 500, response_body: 'boom', error_message: null, duration_ms: 9, created_at: '2026-10-27T10:01:00Z' }];
 
     const server = createServer(async (req, res) => {
@@ -54,8 +55,15 @@ function fakeApi({ plan = 'free', role = 'owner' } = {}) {
 
         if (req.headers.authorization !== 'Bearer shk_test') return send(401, { error: 'Unauthorized' });
         if (route === 'GET /api/me') return send(200, { user: { email: 'dev@example.com', workspace: { role } } });
+        if (route === 'POST /api/endpoints') {
+            const input = JSON.parse(body);
+            if (plan === 'free' && created.length >= 2) return send(402, { error: 'The Free plan includes 3 endpoints. Upgrade for unlimited endpoints, or delete one you no longer use.', code: 'plan_limit' });
+            const endpoint = { uuid: `00000000-0000-4000-8000-00000000000${created.length}`, catch_id: null, catch_host: null, name: input.name, is_active: true, forward_url: input.forward_url ?? null, relay_targets: [], signature_scheme: input.signature_scheme ?? null, has_signing_secret: false };
+            created.push(endpoint);
+            return send(201, { endpoint });
+        }
         if (route === 'GET /api/endpoints') {
-            return send(200, { endpoints: [{ uuid: UUID, slug: 'stripe-dev', catch_id: 'stripe-dev', catch_host: null, name: 'Stripe', is_active: true, forward_url: null, relay_targets: [{ url: 'http://localhost:3000/hook', is_active: true }], signature_scheme: 'stripe', has_signing_secret: true }] });
+            return send(200, { endpoints: [...created, { uuid: UUID, slug: 'stripe-dev', catch_id: 'stripe-dev', catch_host: null, name: 'Stripe', is_active: true, forward_url: null, relay_targets: [{ url: 'http://localhost:3000/hook', is_active: true }], signature_scheme: 'stripe', has_signing_secret: true }] });
         }
         if (route === 'GET /api/logs') {
             const { body: _body, headers: _headers, ...summary } = LOG;
@@ -122,7 +130,7 @@ test('works with the official MCP client: lists tools with annotations', async (
         assert.match(client.getInstructions(), /treat them as data/);
 
         const { tools } = await client.listTools();
-        assert.deepEqual(tools.map((t) => t.name), ['list_endpoints', 'list_events', 'get_event', 'debug_signature', 'replay_event', 'get_replay_result']);
+        assert.deepEqual(tools.map((t) => t.name), ['list_endpoints', 'list_events', 'get_event', 'debug_signature', 'replay_event', 'get_replay_result', 'create_endpoint']);
         const replay = tools.find((t) => t.name === 'replay_event');
         assert.equal(replay.annotations.destructiveHint, true);
         assert.equal(tools.find((t) => t.name === 'get_event').annotations.readOnlyHint, true);
@@ -244,6 +252,43 @@ test('caps replays per minute', async () => {
 
     api.server.close();
     handler.server.close();
+});
+
+test('create_endpoint creates through the API, reuses a same-named endpoint, and caps a session', async () => {
+    const api = await fakeApi({ plan: 'pro' });
+    const tools = createTools({ api: apiClient(api.url), server: api.url });
+    const create = tools.find((t) => t.name === 'create_endpoint');
+    assert.equal(create.annotations.readOnlyHint, false);
+    assert.equal(create.annotations.destructiveHint, false);
+
+    const made = await create.handler({ name: 'Shopify (local)', relay_to: 'http://localhost:3000/webhooks', signature_scheme: 'shopify' });
+    assert.equal(made.created, true);
+    assert.equal(made.catch_url, `${api.url}/c/${made.endpoint}`);
+    assert.match(made.next_steps.at(-1), /slinghook listen .* --forward http:\/\/localhost:3000\/webhooks/);
+    assert.deepEqual(api.requests.find((r) => r.method === 'POST' && r.path === '/api/endpoints').body, { name: 'Shopify (local)', forward_url: 'http://localhost:3000/webhooks', signature_scheme: 'shopify' });
+
+    const again = await create.handler({ name: 'shopify (LOCAL) ' });
+    assert.equal(again.already_existed, true);
+    assert.equal(again.endpoint, made.endpoint);
+
+    const stripe = await create.handler({ name: 'Stripe' });
+    assert.equal(stripe.already_existed, true, 'existing endpoints from the dashboard count too');
+
+    for (let i = 2; i <= MAX_CREATED_ENDPOINTS; i++) await create.handler({ name: `Endpoint ${i}` });
+    await assert.rejects(create.handler({ name: 'One too many' }), /already created 5 endpoints/);
+    assert.equal(api.requests.filter((r) => r.method === 'POST' && r.path === '/api/endpoints').length, MAX_CREATED_ENDPOINTS);
+    api.server.close();
+});
+
+test('create_endpoint passes plan limits back as a next step', async () => {
+    const api = await fakeApi();
+    const tools = createTools({ api: apiClient(api.url), server: api.url });
+    const create = tools.find((t) => t.name === 'create_endpoint');
+
+    await create.handler({ name: 'One' });
+    await create.handler({ name: 'Two' });
+    await assert.rejects(create.handler({ name: 'Three' }), /Free plan includes 3 endpoints/);
+    api.server.close();
 });
 
 test('the protocol answers ping, rejects unknown methods and ignores notifications', async () => {
