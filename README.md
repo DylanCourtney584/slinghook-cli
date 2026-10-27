@@ -9,13 +9,17 @@ Requires Node 20.17+.
 ```bash
 npm install -g slinghook
 
-slinghook login --server https://slinghook.co.za
-slinghook status               # who you're logged in as
+slinghook auth login --server https://slinghook.co.za
+slinghook auth status          # who you're logged in as
 slinghook endpoints            # list your endpoint UUIDs
 slinghook mcp                  # MCP server for AI agents (see below)
 slinghook listen <uuid> --forward http://localhost:3000/webhooks
 # <uuid> can also be the catch URL you copied, e.g. https://slinghook.co.za/c/<uuid>
 ```
+
+Every command also works with the short name `shk`, e.g. `shk auth login` or
+`shk listen <uuid> --forward …`. `login`, `status` and `logout` also work
+without `auth`, as in earlier versions.
 
 ```
 ● Listening on endpoint 3f1c…

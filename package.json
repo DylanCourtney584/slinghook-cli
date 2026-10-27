@@ -16,7 +16,8 @@
   ],
   "type": "module",
   "bin": {
-    "slinghook": "bin/slinghook.js"
+    "slinghook": "bin/slinghook.js",
+    "shk": "bin/slinghook.js"
   },
   "files": [
     "bin",

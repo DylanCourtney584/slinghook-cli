@@ -10,6 +10,7 @@ import { createApi } from '../src/api.js';
 import { parseClaim, saveClaim, describeClaim } from '../src/claims.js';
 import { resolveEndpointUuid } from '../src/endpoint.js';
 import { runMcp } from '../src/mcp/index.js';
+import { resolveCommand } from '../src/commands.js';
 
 // ANSI styling helpers (automatically disabled in non-TTY or with NO_COLOR)
 const useColor = Boolean(process.stdout.isTTY) && !process.env.NO_COLOR;
@@ -24,17 +25,20 @@ const cyan = paint('36');
 
 const HELP = `
 ${bold('slinghook')} — forward SlingHook webhooks to your local server
+${dim('Every command also works with the short name')} shk${dim(', e.g.')} shk auth login
 
 ${bold('Usage:')}
-  slinghook ${cyan('login')}     [--server URL] [--web | --with-token | --token shk_...]
-  slinghook ${cyan('status')}
+  slinghook ${cyan('auth login')}  [--server URL] [--web | --with-token | --token shk_...]
+  slinghook ${cyan('auth status')}
+  slinghook ${cyan('auth logout')}
   slinghook ${cyan('endpoints')}
   slinghook ${cyan('listen')}    <endpoint-uuid|catch-url> --forward <url> [--retries N] [--no-report]
                         [--mine] [--claim FIELD=VALUE ...]
   slinghook ${cyan('chaos')}     <endpoint-uuid|catch-url> --forward <url> (--scenario ID | --request ID)
                         [--check URL] [--only TESTS] [--late-delay SECONDS]
   slinghook ${cyan('mcp')}       [--allow-remote-targets]
-  slinghook ${cyan('logout')}
+
+  ${dim('login, status and logout also work without "auth".')}
 
 ${bold('Options:')}
   --server URL     SlingHook server (default: saved config or http://127.0.0.1:8080)
@@ -91,7 +95,7 @@ async function main(argv) {
         }
     });
 
-    const [command, ...rest] = positionals;
+    const { command, args: rest } = resolveCommand(positionals);
     const config = loadConfig();
     if (values.server) config.server = stripTrailingSlash(values.server);
 
