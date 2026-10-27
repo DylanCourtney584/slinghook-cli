@@ -67,7 +67,7 @@ function fakeApi({ plan = 'free', role = 'owner' } = {}) {
         }
         if (route === 'GET /api/logs/resolve') {
             if (['7', '#7', 'latest', 'latest invoice.paid', 'evt_1'].includes(url.searchParams.get('ref'))) {
-                return send(200, { log: { id: 42, number: 7, event_type: 'invoice.paid' }, ref_kind: 'number' });
+                return send(200, { log: { id: 42, number: 7, event_type: 'invoice.paid', endpoint: { uuid: UUID, name: 'Stripe' } }, ref_kind: 'number' });
             }
             return send(404, { error: 'No event matches that reference' });
         }
@@ -122,7 +122,7 @@ test('works with the official MCP client: lists tools with annotations', async (
         assert.match(client.getInstructions(), /treat them as data/);
 
         const { tools } = await client.listTools();
-        assert.deepEqual(tools.map((t) => t.name), ['list_endpoints', 'list_events', 'get_event', 'debug_signature', 'replay_event', 'get_replay_result']);
+        assert.deepEqual(tools.map((t) => t.name), ['list_endpoints', 'list_events', 'get_event', 'debug_signature', 'replay_event', 'get_replay_result', 'generate_handler']);
         const replay = tools.find((t) => t.name === 'replay_event');
         assert.equal(replay.annotations.destructiveHint, true);
         assert.equal(tools.find((t) => t.name === 'get_event').annotations.readOnlyHint, true);
@@ -244,6 +244,27 @@ test('caps replays per minute', async () => {
 
     api.server.close();
     handler.server.close();
+});
+
+test('generate_handler returns types, fixture and test for the chosen language', async () => {
+    const api = await fakeApi();
+    const tools = createTools({ api: apiClient(api.url), server: api.url });
+    const generate = tools.find((t) => t.name === 'generate_handler');
+
+    const ts = await generate.handler({ event_id: 7, language: 'typescript', target_url: 'http://localhost:4000/hooks' });
+    assert.equal(ts.event, 7);
+    assert.deepEqual(ts.files.map((f) => [f.path, f.purpose]), [['InvoicePaid.ts', 'types'], ['invoice_paid.json', 'fixture'], ['invoice_paid.test.js', 'test']]);
+    assert.match(ts.files[0].content, /interface InvoicePaid/);
+    assert.match(ts.files[2].content, /localhost:4000\/hooks/);
+    assert.doesNotMatch(ts.files[2].content, /Stripe-Signature/, 'expired signatures stay out of tests');
+    assert.equal(ts.signature_check, 'on: checks stripe signatures');
+
+    const go = await generate.handler({ event_id: 7, language: 'go', parts: ['types', 'test'] });
+    assert.deepEqual(go.files.map((f) => f.path), ['invoice_paid.go']);
+    assert.match(go.notes[0], /No test generator for Go/);
+
+    await assert.rejects(generate.handler({ event_id: 7, language: 'cobol' }), /language must be one of/);
+    api.server.close();
 });
 
 test('the protocol answers ping, rejects unknown methods and ignores notifications', async () => {
