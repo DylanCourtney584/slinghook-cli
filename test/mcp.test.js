@@ -151,6 +151,7 @@ test('runs the catch, debug, replay loop end to end', async () => {
         const replay = parse(await client.callTool({ name: 'replay_event', arguments: { event_id: 42, target_url: handler.url } }));
         assert.equal(replay.status, 200);
         assert.equal(replay.verdict, 'fixed');
+        assert.match(replay.expected_outcome, /should reject it/);
         // Delivered with the original body and signature header, minus Host
         assert.equal(handler.received[0].body, LOG.body);
         assert.equal(handler.received[0].headers['stripe-signature'], 't=1,v1=abc');

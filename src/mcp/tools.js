@@ -229,7 +229,12 @@ export function createTools({ api, server, allowRemoteTargets = false, fetchImpl
                     passed: isPassing({ response_status: result.status, error_message: result.error }),
                     ...(result.error ? { error: result.error } : {}),
                     duration_ms: result.durationMs,
-                    response_body: clip(result.body ?? '', RESPONSE_EXCERPT_CHARS).text
+                    response_body: clip(result.body ?? '', RESPONSE_EXCERPT_CHARS).text,
+                    // The verdict counts any 2xx as a pass, which is backwards for a forged or broken signature
+                    ...(log.signature_status === 'invalid' ? {
+                        expected_outcome: 'This event\'s signature is invalid, so a handler that verifies signatures should reject it (4xx). '
+                            + 'Here a 2xx means the handler accepted a bad signature, even though the verdict counts it as passed.'
+                    } : {})
                 };
                 if (!recorded) {
                     return { ...outcome, verdict: null, note: 'Delivered, but the result could not be saved to the replay history, so there is no verdict.' };
