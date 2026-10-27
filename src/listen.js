@@ -147,7 +147,7 @@ export async function listen({
                 duration_ms: result.durationMs
             });
         } catch (err) {
-            logger.warn(`Could not record delivery #${log.id} in history: ${err.message}`);
+            logger.warn(`Could not record delivery #${log.number ?? log.id} in history: ${err.message}`);
         }
     }
 }
@@ -198,13 +198,13 @@ export function consoleLogger() {
             const outcome = result.error
                 ? red(`✗ ${result.error}`)
                 : (result.status < 400 ? green : result.status < 500 ? yellow : red)(String(result.status));
-            console.log(`${time()} ${method} #${log.id} → ${outcome} ${dim(`${result.durationMs}ms`)}${sig}`);
+            console.log(`${time()} ${method} #${log.number ?? log.id} → ${outcome} ${dim(`${result.durationMs}ms`)}${sig}`);
         },
         retrying(log, waitMs, nextAttempt, maxAttempts) {
-            console.log(dim(`         #${log.id} retrying in ${waitMs / 1000}s (try ${nextAttempt} of ${maxAttempts})`));
+            console.log(dim(`         #${log.number ?? log.id} retrying in ${waitMs / 1000}s (try ${nextAttempt} of ${maxAttempts})`));
         },
         skipped(log, reason) {
-            console.log(`${time()} ${String(log.method).padEnd(6)} #${log.id} ${yellow(`skipped: ${reason}`)}`);
+            console.log(`${time()} ${String(log.method).padEnd(6)} #${log.number ?? log.id} ${yellow(`skipped: ${reason}`)}`);
         },
         warn(message) {
             console.error(`${time()} ${yellow('!')} ${message}`);

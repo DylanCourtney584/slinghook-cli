@@ -142,6 +142,11 @@ Catch. Debug. Replay loop:
 | `replay_event` | Re-sends the webhook from your machine to your handler, records it, and returns the verdict: fixed, regressed, still failing or still passing | Yes: a real delivery |
 | `get_replay_result` | Replay history and fix verification verdict (both response bodies on Pro) | No |
 
+Every event has a number within your account (`#12`), shown in the dashboard's
+feed. Name events to your agent however is natural: "event 12", "the latest
+event", "the latest invoice.paid", or the provider's own id such as Stripe's
+`evt_1Qx...`. The inspector's `#12` menu also copies a ready-made prompt.
+
 Add it once, after `slinghook login`:
 
 ```bash

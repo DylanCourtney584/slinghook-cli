@@ -31,7 +31,7 @@ const MAX_RESPONSE_BODY = 10_000;
 export async function forwardLog(log, target, { timeoutMs = 15_000, markReplay = true, fetchImpl = fetch } = {}) {
     const url = buildTargetUrl(target, parseJson(log.query_params, {}));
     const method = String(log.method || 'POST').toUpperCase();
-    const headers = buildHeaders(parseJson(log.headers, {}), log.content_type, log.id, markReplay);
+    const headers = buildHeaders(parseJson(log.headers, {}), log.content_type, log.number ?? log.id, markReplay);
     const body = method === 'GET' || method === 'HEAD' ? undefined : (log.body ?? undefined);
 
     const startedAt = performance.now();

