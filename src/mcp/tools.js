@@ -57,8 +57,7 @@ export function createTools({ api, server, allowRemoteTargets = false, fetchImpl
                         name: ep.name || null,
                         catch_url: ep.catch_host ? `https://${ep.catch_host}/${ep.catch_id || ep.uuid}` : `${server}/c/${ep.catch_id || ep.uuid}`,
                         active: Boolean(ep.is_active),
-                        signature_scheme: ep.signature_scheme || null,
-                        has_signing_secret: Boolean(ep.has_signing_secret),
+                        signature_check: signatureCheck(ep),
                         relays_to: [ep.forward_url, ...(ep.relay_targets ?? []).filter((t) => t.is_active).map((t) => t.url)].filter(Boolean)
                     }))
                 };
@@ -293,6 +292,15 @@ export function createTools({ api, server, allowRemoteTargets = false, fetchImpl
             }
         }
     }));
+}
+
+/**
+ * Spelled out because the raw fields mislead: a null scheme means "detect the
+ * provider from headers", not "no checking"; only a missing secret turns it off.
+ */
+function signatureCheck(ep) {
+    if (!ep.has_signing_secret) return 'off: no signing secret saved, so every event is unverified';
+    return ep.signature_scheme ? `on: checks ${ep.signature_scheme} signatures` : 'on: detects the provider (Stripe, GitHub, Shopify, ...) from each request\'s headers';
 }
 
 function describeVerdict(baseline, current) {

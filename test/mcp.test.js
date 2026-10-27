@@ -133,6 +133,7 @@ test('runs the catch, debug, replay loop end to end', async () => {
         const { endpoints } = parse(await client.callTool({ name: 'list_endpoints', arguments: {} }));
         assert.equal(endpoints[0].catch_url, `${api.url}/c/stripe-dev`);
         assert.deepEqual(endpoints[0].relays_to, ['http://localhost:3000/hook']);
+        assert.equal(endpoints[0].signature_check, 'on: checks stripe signatures');
 
         // A slug works as the endpoint, and filters apply within the newest window
         const listed = parse(await client.callTool({ name: 'list_events', arguments: { endpoint: 'stripe-dev', signature: 'invalid' } }));
