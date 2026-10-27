@@ -1,6 +1,6 @@
 {
   "name": "slinghook",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Forward SlingHook webhooks to your local dev server",
   "keywords": [
     "webhook",
@@ -32,5 +32,8 @@
   "license": "MIT",
   "dependencies": {
     "@inquirer/prompts": "^8.7.3"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2"
   }
 }

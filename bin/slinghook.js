@@ -9,6 +9,7 @@ import { runChaos } from '../src/chaos.js';
 import { createApi } from '../src/api.js';
 import { parseClaim, saveClaim, describeClaim } from '../src/claims.js';
 import { resolveEndpointUuid } from '../src/endpoint.js';
+import { runMcp } from '../src/mcp/index.js';
 
 // ANSI styling helpers (automatically disabled in non-TTY or with NO_COLOR)
 const useColor = Boolean(process.stdout.isTTY) && !process.env.NO_COLOR;
@@ -32,6 +33,7 @@ ${bold('Usage:')}
                         [--mine] [--claim FIELD=VALUE ...]
   slinghook ${cyan('chaos')}     <endpoint-uuid|catch-url> --forward <url> (--scenario ID | --request ID)
                         [--check URL] [--only TESTS] [--late-delay SECONDS]
+  slinghook ${cyan('mcp')}       [--allow-remote-targets]
   slinghook ${cyan('logout')}
 
 ${bold('Options:')}
@@ -56,6 +58,11 @@ ${dim('concurrent duplicates, out of order, late retries and with broken bodies,
   --late-delay S   Seconds to wait before the late retry (default: 5)
   Exits with code 1 when a test fails, so it can run in CI.
 
+${bold('MCP server')} ${dim('(for AI agents such as Claude Code and Cursor): the agent starts it and talks')}
+${dim('to it over stdin/stdout, as you. Add it once, e.g.')} claude mcp add slinghook -- slinghook mcp
+  --allow-remote-targets  Let the agent replay events to public URLs, not just localhost
+                          and your private network
+
 ${bold('Environment:')}
   ${dim('SLINGHOOK_SERVER, SLINGHOOK_TOKEN override the saved configuration.')}
 `;
@@ -79,6 +86,7 @@ async function main(argv) {
             check: { type: 'string' },
             only: { type: 'string' },
             'late-delay': { type: 'string' },
+            'allow-remote-targets': { type: 'boolean', default: false },
             help: { type: 'boolean', short: 'h' }
         }
     });
@@ -108,6 +116,8 @@ async function main(argv) {
             return runListen(requireToken(config), rest[0], values);
         case 'chaos':
             return runChaosCommand(requireToken(config), rest[0], values);
+        case 'mcp':
+            return runMcp(requireToken(config), { allowRemoteTargets: values['allow-remote-targets'] });
         default:
             throw new Error(`Unknown command "${command}". Run slinghook --help`);
     }

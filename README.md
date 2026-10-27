@@ -12,6 +12,7 @@ npm install -g slinghook
 slinghook login --server https://slinghook.co.za
 slinghook status               # who you're logged in as
 slinghook endpoints            # list your endpoint UUIDs
+slinghook mcp                  # MCP server for AI agents (see below)
 slinghook listen <uuid> --forward http://localhost:3000/webhooks
 # <uuid> can also be the catch URL you copied, e.g. https://slinghook.co.za/c/<uuid>
 ```
@@ -119,6 +120,61 @@ Pick tests with `--only duplicates,concurrent`. Run without `--scenario` to
 list the endpoint's scenarios. The report is saved to the dashboard (⌘K →
 "Chaos mode"), and the command exits with code 1 when a test fails, so it can
 run in CI.
+
+## MCP server: let your AI agent debug webhooks
+
+`slinghook mcp` is a [Model Context Protocol](https://modelcontextprotocol.io)
+server. AI coding agents such as Claude Code, Cursor and VS Code start it in the
+background and call SlingHook as a set of tools, logged in as you. Ask your agent
+"my Stripe webhook is failing, find out why and fix it", and it can run the whole
+Catch. Debug. Replay loop:
+
+| Tool | What it does | Changes anything? |
+| --- | --- | --- |
+| `list_endpoints` | Your catch URLs and where each one relays | No |
+| `list_events` | Captured webhooks as short summaries (no bodies). The 50 newest on every plan; `query` and `before_id` search full history (Pro) | No |
+| `get_event` | One webhook in full: headers, query, body (long bodies cut) | No |
+| `debug_signature` | Why the signature failed, optionally against a candidate secret | No |
+| `replay_event` | Re-sends the webhook from your machine to your handler, records it, and returns the verdict: fixed, regressed, still failing or still passing | Yes: a real delivery |
+| `get_replay_result` | Replay history and fix verification verdict (both response bodies on Pro) | No |
+
+Add it once, after `slinghook login`:
+
+```bash
+# Claude Code (macOS, Linux)
+claude mcp add slinghook -- slinghook mcp
+
+# Claude Code on Windows: npm installs slinghook as a .cmd file, which needs cmd /c
+claude mcp add slinghook -- cmd /c slinghook mcp
+```
+
+Other clients take the same command in their JSON config:
+
+```json
+{ "mcpServers": { "slinghook": { "command": "slinghook", "args": ["mcp"] } } }
+```
+
+In Claude Code, `/mcp` shows whether it connected. The agent asks before running
+`replay_event`, because the tool is marked as one that changes things.
+
+Safety rails:
+
+- **Replays stay local.** `replay_event` only sends to localhost and private
+  networks (10.x, 172.16-31.x, 192.168.x, `host.docker.internal`). Webhook bodies
+  are written by third parties, and a crafted one could try to talk your agent
+  into sending stored payloads elsewhere. Start the server with
+  `slinghook mcp --allow-remote-targets` to lift this.
+- **Rate limits.** One MCP session makes at most 60 tool calls and 10 replays a
+  minute, so a looping agent stops quickly.
+- **Your permissions.** Every call uses your token, so the server's rules apply:
+  your workspace, your role (viewers can't replay) and your plan.
+
+The server talks JSON-RPC over stdin and stdout, so it prints nothing to stdout
+itself; its startup note goes to stderr. To see the protocol, pipe a request in:
+
+```bash
+echo '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | slinghook mcp
+```
 
 ## Known gaps
 
