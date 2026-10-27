@@ -10,7 +10,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { ApiError, createApi } from '../src/api.js';
 import { createMcpServer } from '../src/mcp/server.js';
 import { checkTarget, createTools, explain, isLocalHost } from '../src/mcp/tools.js';
-import { findBaseline, verdictFor } from '../src/mcp/verdict.js';
+import { expectsRejection, findBaseline, isPassing, verdictFor } from '../src/mcp/verdict.js';
 
 const UUID = '4e6acf98-9df8-49bc-8783-45a4d01d4eef';
 const BIN = fileURLToPath(new URL('../bin/slinghook.js', import.meta.url));
@@ -149,8 +149,10 @@ test('runs the catch, debug, replay loop end to end', async () => {
         assert.equal(diagnosis.used_candidate_secret, true);
 
         const replay = parse(await client.callTool({ name: 'replay_event', arguments: { event_id: 42, target_url: handler.url } }));
+        // Event 42's signature is invalid, so the handler accepting it is a failure (#92)
         assert.equal(replay.status, 200);
-        assert.equal(replay.verdict, 'fixed');
+        assert.equal(replay.passed, false);
+        assert.equal(replay.verdict, 'still_failing');
         assert.match(replay.expected_outcome, /should reject it/);
         // Delivered with the original body and signature header, minus Host
         assert.equal(handler.received[0].body, LOG.body);
@@ -159,7 +161,8 @@ test('runs the catch, debug, replay loop end to end', async () => {
         assert.ok(api.requests.some((r) => r.method === 'POST' && r.path === '/api/logs/42/replays' && r.body.response_status === 200));
 
         const result = parse(await client.callTool({ name: 'get_replay_result', arguments: { event_id: 42 } }));
-        assert.equal(result.verdict, 'fixed');
+        assert.equal(result.verdict, 'still_failing');
+        assert.match(result.expected_outcome, /should reject it/);
         assert.equal(result.replays, 2);
         assert.match(result.note, /needs the Pro plan/);
     } finally {
@@ -197,6 +200,20 @@ test('viewers cannot replay', async () => {
     const replay = tools.find((t) => t.name === 'replay_event');
     await assert.rejects(replay.handler({ event_id: 42, target_url: 'http://localhost:3000/hook' }), /viewer/);
     api.server.close();
+});
+
+test('a handler that rejects an invalid signature passes', async () => {
+    const api = await fakeApi();
+    const handler = await localHandler(401);
+    const tools = createTools({ api: apiClient(api.url), server: api.url });
+    const replay = tools.find((t) => t.name === 'replay_event');
+
+    const result = await replay.handler({ event_id: 42, target_url: handler.url });
+    assert.equal(result.passed, true);
+    assert.equal(result.verdict, 'fixed');
+
+    api.server.close();
+    handler.server.close();
 });
 
 test('caps replays per minute', async () => {
@@ -246,6 +263,16 @@ test('verdict compares with the previous attempt to the same URL', () => {
     assert.equal(verdictFor(attempts[2], attempts[0]), 'fixed');
     assert.equal(verdictFor(attempts[0], { response_status: null, error_message: 'refused' }), 'regressed');
     assert.equal(verdictFor(null, attempts[0]), null);
+});
+
+test('an invalid signature expects a 4xx, and a 5xx never passes', () => {
+    assert.equal(expectsRejection({ signature_status: 'invalid' }), true);
+    assert.equal(expectsRejection({ signature_status: 'unverified' }), false);
+    assert.equal(isPassing({ response_status: 401 }, true), true);
+    assert.equal(isPassing({ response_status: 200 }, true), false);
+    assert.equal(isPassing({ response_status: 500 }, true), false);
+    assert.equal(verdictFor({ response_status: 200 }, { response_status: 400 }, true), 'fixed');
+    assert.equal(verdictFor({ response_status: 403 }, { response_status: 200 }, true), 'regressed');
 });
 
 test('explains API errors', () => {
