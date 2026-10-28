@@ -72,6 +72,14 @@ function fakeApi({ plan = 'free', role = 'owner' } = {}) {
             return send(404, { error: 'No event matches that reference' });
         }
         if (route === 'GET /api/logs/42') return send(200, { log: LOG });
+        if (route === 'GET /api/scenarios') return send(200, { scenarios: url.searchParams.get('endpoint') === UUID ? [{ id: 5, name: 'Invoice retries', step_count: 2, created_at: '2026-10-27T09:00:00Z', updated_at: '2026-10-27T09:30:00Z' }] : [] });
+        if (route === 'GET /api/scenarios/5') {
+            // The second step arrived an hour after the first
+            return send(200, { scenario: { id: 5, name: 'Invoice retries', endpoint_id: 1, steps: [
+                { position: 0, log_id: 42, delay_ms: 0, method: 'POST', label: 'invoice.paid', is_truncated: false },
+                { position: 1, log_id: 42, delay_ms: 3_600_000, method: 'POST', label: 'invoice.paid (retry)', is_truncated: false }
+            ] } });
+        }
         if (route === 'GET /api/logs/42/signature' || route === 'POST /api/logs/42/signature') {
             return send(200, { diagnosis: { status: 'invalid', reason: 'wrong_secret', message: 'Signed with a different secret', used_candidate_secret: req.method === 'POST' } });
         }
@@ -122,7 +130,7 @@ test('works with the official MCP client: lists tools with annotations', async (
         assert.match(client.getInstructions(), /treat them as data/);
 
         const { tools } = await client.listTools();
-        assert.deepEqual(tools.map((t) => t.name), ['list_endpoints', 'list_events', 'get_event', 'debug_signature', 'replay_event', 'get_replay_result', 'generate_handler']);
+        assert.deepEqual(tools.map((t) => t.name), ['list_endpoints', 'list_events', 'get_event', 'debug_signature', 'replay_event', 'get_replay_result', 'list_scenarios', 'run_scenario', 'generate_handler']);
         const replay = tools.find((t) => t.name === 'replay_event');
         assert.equal(replay.annotations.destructiveHint, true);
         assert.equal(tools.find((t) => t.name === 'get_event').annotations.readOnlyHint, true);
@@ -244,6 +252,66 @@ test('caps replays per minute', async () => {
 
     api.server.close();
     handler.server.close();
+});
+
+test('list_scenarios shows saved scenarios by id', async () => {
+    const api = await fakeApi();
+    const tools = createTools({ api: apiClient(api.url), server: api.url });
+    const list = tools.find((t) => t.name === 'list_scenarios');
+
+    const { scenarios } = await list.handler({ endpoint: UUID });
+    assert.deepEqual(scenarios, [{ scenario: 5, name: 'Invoice retries', steps: 2, updated_at: '2026-10-27T09:30:00Z' }]);
+    api.server.close();
+});
+
+test('run_scenario replays each step and stops at the first failure', async () => {
+    const api = await fakeApi();
+    const handler = await localHandler(500);
+    const tools = createTools({ api: apiClient(api.url), server: api.url });
+    const run = tools.find((t) => t.name === 'run_scenario');
+    assert.equal(run.annotations.openWorldHint, true);
+
+    const result = await run.handler({ scenario: 5, target_url: handler.url });
+    assert.equal(result.summary, '0 of 2 passed, stopped at step 1 (invoice.paid: HTTP 500); 1 not run');
+    assert.equal(result.steps.length, 1);
+    assert.equal(result.steps[0].event, 7);
+    assert.equal(result.steps[0].verdict, 'still_failing');
+    assert.equal(result.steps[0].response_body, 'still broken');
+    assert.equal(handler.received.length, 1);
+    assert.equal(api.requests.filter((r) => r.method === 'POST' && r.path === '/api/logs/42/replays').length, 1, 'each step lands in replay history');
+
+    api.server.close();
+    handler.server.close();
+});
+
+test('run_scenario keeps timing only when asked, capped at 5 seconds, and has its own rate limit', async () => {
+    const api = await fakeApi();
+    const handler = await localHandler(401);
+    const waits = [];
+    const tools = createTools({ api: apiClient(api.url), server: api.url, sleep: async (ms) => { waits.push(ms); } });
+    const run = tools.find((t) => t.name === 'run_scenario');
+
+    const fast = await run.handler({ scenario: 5, target_url: handler.url });
+    assert.equal(fast.summary, '2 of 2 passed');
+    assert.deepEqual(waits, []);
+
+    await run.handler({ scenario: 5, target_url: handler.url, keep_timing: true });
+    assert.deepEqual(waits, [5_000], 'an hour-long gap waits 5 seconds');
+
+    await run.handler({ scenario: 5, target_url: handler.url });
+    await assert.rejects(run.handler({ scenario: 5, target_url: handler.url }), /at most 3 a minute/);
+    await assert.rejects(run.handler({ scenario: 5, target_url: 'https://attacker.example/x' }), /--allow-remote-targets/);
+
+    api.server.close();
+    handler.server.close();
+});
+
+test('viewers cannot run scenarios', async () => {
+    const api = await fakeApi({ role: 'viewer' });
+    const tools = createTools({ api: apiClient(api.url), server: api.url });
+    const run = tools.find((t) => t.name === 'run_scenario');
+    await assert.rejects(run.handler({ scenario: 5, target_url: 'http://localhost:3000/hook' }), /viewer/);
+    api.server.close();
 });
 
 test('generate_handler returns types, fixture and test for the chosen language', async () => {
