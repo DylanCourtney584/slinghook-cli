@@ -143,6 +143,7 @@ Catch. Debug. Replay loop:
 | `get_replay_result` | Replay history and fix verification verdict (both response bodies on Pro) | No |
 | `list_scenarios` | Saved scenarios (ordered sets of events) on an endpoint | No |
 | `run_scenario` | Replays every step of a scenario from your machine to your handler and reports each step (back to back, or recorded gaps capped at 5s with `keep_timing`; 3 runs a minute) | Yes: real deliveries |
+| `generate_handler` | Types, a fixture and a test (TypeScript, Python, PHP or Go) from a real event, to build a handler around. Writes no files itself | No |
 | `compare_events` | What differs between two webhooks, field by field (defaults to the previous event of the same type) | No |
 
 Every event has a number within your account (`#12`), shown in the dashboard's

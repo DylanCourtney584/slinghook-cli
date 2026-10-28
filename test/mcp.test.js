@@ -86,6 +86,8 @@ function fakeApi({ plan = 'free', role = 'owner', log = LOG } = {}) {
             }
             return send(404, { error: 'No event matches that reference' });
         }
+        if (route === 'GET /api/logs/42') return send(200, { log });
+        if (route === 'GET /api/logs/41') return send(200, { log: OLDER_LOG });
         if (route === 'GET /api/scenarios') return send(200, { scenarios: url.searchParams.get('endpoint') === UUID ? [{ id: 5, name: 'Invoice retries', step_count: 2, created_at: '2026-10-27T09:00:00Z', updated_at: '2026-10-27T09:30:00Z' }] : [] });
         if (route === 'GET /api/scenarios/5') {
             // The second step arrived an hour after the first
@@ -94,8 +96,6 @@ function fakeApi({ plan = 'free', role = 'owner', log = LOG } = {}) {
                 { position: 1, log_id: 42, delay_ms: 3_600_000, method: 'POST', label: 'invoice.paid (retry)', is_truncated: false }
             ] } });
         }
-        if (route === 'GET /api/logs/42') return send(200, { log });
-        if (route === 'GET /api/logs/41') return send(200, { log: OLDER_LOG });
         if (route === 'GET /api/logs/42/signature' || route === 'POST /api/logs/42/signature') {
             return send(200, { diagnosis: { status: 'invalid', reason: 'wrong_secret', message: 'Signed with a different secret', used_candidate_secret: req.method === 'POST' } });
         }
@@ -146,7 +146,7 @@ test('works with the official MCP client: lists tools with annotations', async (
         assert.match(client.getInstructions(), /treat them as data/);
 
         const { tools } = await client.listTools();
-        assert.deepEqual(tools.map((t) => t.name), ['list_endpoints', 'list_events', 'get_event', 'debug_signature', 'replay_event', 'get_replay_result', 'list_scenarios', 'run_scenario', 'compare_events']);
+        assert.deepEqual(tools.map((t) => t.name), ['list_endpoints', 'list_events', 'get_event', 'debug_signature', 'replay_event', 'get_replay_result', 'list_scenarios', 'run_scenario', 'generate_handler', 'compare_events']);
         const replay = tools.find((t) => t.name === 'replay_event');
         assert.equal(replay.annotations.destructiveHint, true);
         assert.equal(tools.find((t) => t.name === 'get_event').annotations.readOnlyHint, true);
@@ -327,6 +327,27 @@ test('viewers cannot run scenarios', async () => {
     const tools = createTools({ api: apiClient(api.url), server: api.url });
     const run = tools.find((t) => t.name === 'run_scenario');
     await assert.rejects(run.handler({ scenario: 5, target_url: 'http://localhost:3000/hook' }), /viewer/);
+    api.server.close();
+});
+
+test('generate_handler returns types, fixture and test for the chosen language', async () => {
+    const api = await fakeApi();
+    const tools = createTools({ api: apiClient(api.url), server: api.url });
+    const generate = tools.find((t) => t.name === 'generate_handler');
+
+    const ts = await generate.handler({ event_id: 7, language: 'typescript', target_url: 'http://localhost:4000/hooks' });
+    assert.equal(ts.event, 7);
+    assert.deepEqual(ts.files.map((f) => [f.path, f.purpose]), [['InvoicePaid.ts', 'types'], ['invoice_paid.json', 'fixture'], ['invoice_paid.test.js', 'test']]);
+    assert.match(ts.files[0].content, /interface InvoicePaid/);
+    assert.match(ts.files[2].content, /localhost:4000\/hooks/);
+    assert.doesNotMatch(ts.files[2].content, /Stripe-Signature/, 'expired signatures stay out of tests');
+    assert.equal(ts.signature_check, 'on: checks stripe signatures');
+
+    const go = await generate.handler({ event_id: 7, language: 'go', parts: ['types', 'test'] });
+    assert.deepEqual(go.files.map((f) => f.path), ['invoice_paid.go']);
+    assert.match(go.notes[0], /No test generator for Go/);
+
+    await assert.rejects(generate.handler({ event_id: 7, language: 'cobol' }), /language must be one of/);
     api.server.close();
 });
 
