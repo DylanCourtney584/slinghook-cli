@@ -36,5 +36,15 @@
   },
   "devDependencies": {
     "@modelcontextprotocol/sdk": "^1.32.2"
+  },
+  "repository": {
+    "type": "git"
+  },
+  "reposistory": {
+    "url": "git+https://github.com/DylanCourtney584/slinghook-cli.git"
+  },
+  "homepage": "https://github.com/DylanCourtney584/slinghook-cli#readme",
+  "bugs": {
+    "url": "https://github.com/DylanCourtney584/slinghook-cli/issues"
   }
 }
