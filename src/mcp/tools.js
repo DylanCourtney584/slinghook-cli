@@ -43,8 +43,10 @@ const endpointInput = {
     type: 'string',
     description: 'Endpoint UUID, catch URL (https://…/c/<id>) or reserved slug, as list_endpoints shows it'
 };
+// anyOf rather than type: ['integer', 'string']: some clients map schemas onto a
+// single-type dialect (Gemini's OpenAPI subset) and reject or drop type arrays
 const eventIdInput = {
-    type: ['integer', 'string'],
+    anyOf: [{ type: 'integer' }, { type: 'string' }],
     description: 'Which event: its number (12 or "#12", from list_events or the dashboard), "latest", "latest <event type>" such as "latest invoice.paid", or the provider\'s own event id such as evt_1Qx...'
 };
 

@@ -430,6 +430,17 @@ test('create_endpoint passes plan limits back as a next step', async () => {
     api.server.close();
 });
 
+test('tool schemas use one type per node, so single-type clients accept them', () => {
+    const arrays = [];
+    const walk = (node, path) => {
+        if (!node || typeof node !== 'object') return;
+        if (Array.isArray(node.type)) arrays.push(path);
+        for (const [key, child] of Object.entries(node)) walk(child, `${path}.${key}`);
+    };
+    for (const tool of createTools({ api: apiClient('http://127.0.0.1:1'), server: 'http://127.0.0.1:1' })) walk(tool.inputSchema, tool.name);
+    assert.deepEqual(arrays, []);
+});
+
 test('the protocol answers ping, rejects unknown methods and ignores notifications', async () => {
     const server = createMcpServer({ info: { name: 't', version: '0' }, tools: [] });
     assert.deepEqual(await server.handle({ jsonrpc: '2.0', id: 1, method: 'ping' }), { jsonrpc: '2.0', id: 1, result: {} });
