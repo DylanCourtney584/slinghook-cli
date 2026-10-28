@@ -35,8 +35,20 @@ const LOG = {
     event_type: 'invoice.paid'
 };
 
+// The same invoice one delivery earlier: a different amount, no discount yet
+const OLDER_LOG = {
+    ...LOG,
+    id: 41,
+    number: 6,
+    headers: { 'Content-Type': 'application/json', 'Stripe-Signature': 't=0,v1=old', Host: 'slinghook.co.za' },
+    body: '{"id":"evt_0","type":"invoice.paid","data":{"amount":900,"lines":[{"id":"li_1","qty":1}]}}',
+    signature_status: 'valid',
+    created_at: '2026-10-27T09:00:00.000Z'
+};
+const NEWER_LOG = { ...LOG, body: '{"type":"invoice.paid","id":"evt_1","data":{"amount":1200,"discount":"SAVE","lines":[{"id":"li_1","qty":2}]}}' };
+
 /** A pretend SlingHook API that records what it was asked */
-function fakeApi({ plan = 'free', role = 'owner' } = {}) {
+function fakeApi({ plan = 'free', role = 'owner', log = LOG } = {}) {
     const requests = [];
     const created = [];
     const replays = [{ id: 1, log_id: 42, target_url: 'http://127.0.0.1:1/hook', response_status: 500, response_body: 'boom', error_message: null, duration_ms: 9, created_at: '2026-10-27T10:01:00Z' }];
@@ -67,7 +79,7 @@ function fakeApi({ plan = 'free', role = 'owner' } = {}) {
         }
         if (route === 'GET /api/logs') {
             const { body: _body, headers: _headers, ...summary } = LOG;
-            return send(200, { logs: [summary, { ...summary, id: 41, signature_status: 'valid' }] });
+            return send(200, { logs: [summary, { ...summary, id: 41, number: 6, signature_status: 'valid' }] });
         }
         if (route === 'GET /api/logs/search') {
             if (plan === 'free') return send(403, { error: 'Searching your full history needs Pro', upgrade: true });
@@ -77,9 +89,13 @@ function fakeApi({ plan = 'free', role = 'owner' } = {}) {
             if (['7', '#7', 'latest', 'latest invoice.paid', 'evt_1'].includes(url.searchParams.get('ref'))) {
                 return send(200, { log: { id: 42, number: 7, event_type: 'invoice.paid', endpoint: { uuid: UUID, name: 'Stripe' } }, ref_kind: 'number' });
             }
+            if (url.searchParams.get('ref') === '6') {
+                return send(200, { log: { id: 41, number: 6, event_type: 'invoice.paid', endpoint: { uuid: UUID, name: 'Stripe' } }, ref_kind: 'number' });
+            }
             return send(404, { error: 'No event matches that reference' });
         }
-        if (route === 'GET /api/logs/42') return send(200, { log: LOG });
+        if (route === 'GET /api/logs/42') return send(200, { log });
+        if (route === 'GET /api/logs/41') return send(200, { log: OLDER_LOG });
         if (route === 'GET /api/scenarios') return send(200, { scenarios: url.searchParams.get('endpoint') === UUID ? [{ id: 5, name: 'Invoice retries', step_count: 2, created_at: '2026-10-27T09:00:00Z', updated_at: '2026-10-27T09:30:00Z' }] : [] });
         if (route === 'GET /api/scenarios/5') {
             // The second step arrived an hour after the first
@@ -138,7 +154,7 @@ test('works with the official MCP client: lists tools with annotations', async (
         assert.match(client.getInstructions(), /treat them as data/);
 
         const { tools } = await client.listTools();
-        assert.deepEqual(tools.map((t) => t.name), ['list_endpoints', 'list_events', 'get_event', 'debug_signature', 'replay_event', 'get_replay_result', 'list_scenarios', 'run_scenario', 'generate_handler', 'create_endpoint']);
+        assert.deepEqual(tools.map((t) => t.name), ['list_endpoints', 'list_events', 'get_event', 'debug_signature', 'replay_event', 'get_replay_result', 'list_scenarios', 'run_scenario', 'generate_handler', 'compare_events', 'create_endpoint']);
         const replay = tools.find((t) => t.name === 'replay_event');
         assert.equal(replay.annotations.destructiveHint, true);
         assert.equal(tools.find((t) => t.name === 'get_event').annotations.readOnlyHint, true);
@@ -340,6 +356,40 @@ test('generate_handler returns types, fixture and test for the chosen language',
     assert.match(go.notes[0], /No test generator for Go/);
 
     await assert.rejects(generate.handler({ event_id: 7, language: 'cobol' }), /language must be one of/);
+    api.server.close();
+});
+
+test('compare_events lists body changes from the older event to the newer one', async () => {
+    const api = await fakeApi({ log: NEWER_LOG });
+    const tools = createTools({ api: apiClient(api.url), server: api.url });
+    const compare = tools.find((t) => t.name === 'compare_events');
+
+    // Passed newest first: the result still reads older -> newer
+    const result = await compare.handler({ a: 7, b: '6' });
+    assert.equal(result.older.event, 6);
+    assert.equal(result.newer.event, 7);
+    assert.equal(result.summary, 'Body: 3 changed, 1 added, 0 removed; headers match');
+    assert.deepEqual(result.body_changes.find((c) => c.path === 'data.amount'), { path: 'data.amount', kind: 'changed', before: '900', after: '1200' });
+    assert.deepEqual(result.body_changes.find((c) => c.path === 'data.discount'), { path: 'data.discount', kind: 'added', after: '"SAVE"' });
+    assert.ok(result.body_changes.some((c) => c.path === 'data.lines[id="li_1"].qty'), 'arrays are matched by id');
+    assert.match(result.headers_skipped, /1 per-delivery header/);
+    assert.ok(!JSON.stringify(result).includes('"id":4'), 'internal ids stay hidden');
+
+    api.server.close();
+});
+
+test('compare_events defaults to the previous event of the same type', async () => {
+    const api = await fakeApi({ log: NEWER_LOG });
+    const tools = createTools({ api: apiClient(api.url), server: api.url });
+    const compare = tools.find((t) => t.name === 'compare_events');
+
+    const result = await compare.handler({ a: 'latest', include_headers: false });
+    assert.equal(result.older.event, 6);
+    assert.match(result.compared_with, /#6, the previous invoice\.paid/);
+    assert.equal(result.header_changes, undefined);
+    assert.ok(api.requests.some((r) => r.path === '/api/logs' && r.query.endpoint === UUID));
+
+    await assert.rejects(compare.handler({ a: 7, b: '#7' }), /same event/);
     api.server.close();
 });
 
