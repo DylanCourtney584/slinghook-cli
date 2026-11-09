@@ -2,7 +2,7 @@ import { mkdirSync, readFileSync, writeFileSync, chmodSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, dirname } from 'node:path';
 
-export const DEFAULT_SERVER = 'http://127.0.0.1:8080';
+export const DEFAULT_SERVER = 'https://slinghook.co.za';
 
 export function configPath() {
     const base = process.env.XDG_CONFIG_HOME || join(homedir(), '.config');

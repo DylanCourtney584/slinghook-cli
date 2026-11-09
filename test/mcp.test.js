@@ -239,6 +239,23 @@ test('errors come back as tool results the model can act on', async () => {
     }
 });
 
+test('starts without a login: tools list, and calls say how to sign in', async () => {
+    const env = { ...process.env, SLINGHOOK_SERVER: 'http://127.0.0.1:9', XDG_CONFIG_HOME: mkdtempSync(join(tmpdir(), 'sh-')) };
+    delete env.SLINGHOOK_TOKEN;
+    const client = new Client({ name: 'test', version: '1.0.0' });
+    await client.connect(new StdioClientTransport({ command: process.execPath, args: [BIN, 'mcp'], env, stderr: 'ignore' }));
+    try {
+        const { tools } = await client.listTools();
+        assert.ok(tools.some((t) => t.name === 'list_endpoints'));
+
+        const result = await client.callTool({ name: 'list_endpoints', arguments: {} });
+        assert.equal(result.isError, true);
+        assert.match(result.content[0].text, /Not logged in.*slinghook login.*SLINGHOOK_TOKEN/);
+    } finally {
+        await client.close();
+    }
+});
+
 test('viewers cannot replay', async () => {
     const api = await fakeApi({ role: 'viewer' });
     const tools = createTools({ api: apiClient(api.url), server: api.url });

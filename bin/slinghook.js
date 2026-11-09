@@ -41,7 +41,7 @@ ${bold('Usage:')}
   ${dim('login, status and logout also work without "auth".')}
 
 ${bold('Options:')}
-  --server URL     SlingHook server (default: saved config or http://127.0.0.1:8080)
+  --server URL     SlingHook server (default: saved config or https://slinghook.co.za)
   --web            Log in with your browser (skips the choice prompt)
   --with-token     Read a personal access token from standard input
   --token TOKEN    Log in with this personal access token directly
@@ -121,7 +121,9 @@ async function main(argv) {
         case 'chaos':
             return runChaosCommand(requireToken(config), rest[0], values);
         case 'mcp':
-            return runMcp(requireToken(config), { allowRemoteTargets: values['allow-remote-targets'] });
+            // Starts signed out too, so MCP clients and directories can list the tools;
+            // each tool call then explains how to sign in
+            return runMcp(config, { allowRemoteTargets: values['allow-remote-targets'] });
         default:
             throw new Error(`Unknown command "${command}". Run slinghook --help`);
     }
