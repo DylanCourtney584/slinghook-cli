@@ -1,6 +1,6 @@
 {
   "name": "slinghook",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "mcpName": "io.github.DylanCourtney584/slinghook",
   "description": "Forward SlingHook webhooks to your local dev server",
   "keywords": [
