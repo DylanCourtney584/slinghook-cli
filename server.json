@@ -1,0 +1,44 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.schema.json",
+  "name": "io.github.DylanCourtney584/slinghook",
+  "title": "SlingHook",
+  "description": "Inspect, debug and replay captured webhooks (Stripe, GitHub, Shopify) from your AI agent.",
+  "websiteUrl": "https://slinghook.co.za",
+  "repository": {
+    "url": "https://github.com/DylanCourtney584/slinghook-cli",
+    "source": "github"
+  },
+  "version": "0.5.1",
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "slinghook",
+      "version": "0.5.1",
+      "transport": {
+        "type": "stdio"
+      },
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "mcp"
+        }
+      ],
+      "environmentVariables": [
+        {
+          "name": "SLINGHOOK_TOKEN",
+          "description": "SlingHook API token (shk_...). Optional after running `npx slinghook login` once.",
+          "isRequired": false,
+          "isSecret": true,
+          "format": "string"
+        },
+        {
+          "name": "SLINGHOOK_SERVER",
+          "description": "Server URL. Defaults to https://slinghook.co.za; set it for a self-hosted server.",
+          "isRequired": false,
+          "format": "string"
+        }
+      ]
+    }
+  ]
+}
