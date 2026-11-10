@@ -4,7 +4,7 @@ Forwards webhooks captured by a SlingHook server to a server on your machine,
 such as `localhost:3000`. A hosted SlingHook instance can't reach your localhost,
 so the CLI makes the connection outbound, the same way `stripe listen` does.
 
-![slinghook listen forwarding Stripe webhooks to localhost:3000, retrying a 500](https://raw.githubusercontent.com/DylanCourtney584/slinghook-cli/main/media/cli-listen.gif)
+![slinghook listen forwarding Stripe webhooks to localhost:3000, retrying a 500](https://raw.githubusercontent.com/fulcrum-software-za/slinghook-cli/main/media/cli-listen.gif)
 
 Requires Node 20.17+.
 
