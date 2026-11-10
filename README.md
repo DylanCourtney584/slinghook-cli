@@ -201,13 +201,13 @@ echo '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | slinghook mcp
 
 ## Developing
 
-From a checkout of the SlingHook repo, `cd cli && npm link` puts your working copy on
+Clone this repo, then `npm install && npm link` puts your working copy on
 your PATH, and `npm test` runs the tests.
 
 ## Publishing
 
 Bump `version` in `package.json`, then run `npm publish` from this folder. The tests run
-first (`prepublishOnly`), and only `bin/`, `src/`, this README and `package.json` are
+first (`prepublishOnly`), and only `bin/`, `src/`, this README, `LICENSE` and `package.json` are
 included in the package.
 
 ## License
