@@ -209,3 +209,7 @@ your PATH, and `npm test` runs the tests.
 Bump `version` in `package.json`, then run `npm publish` from this folder. The tests run
 first (`prepublishOnly`), and only `bin/`, `src/`, this README and `package.json` are
 included in the package.
+
+## License
+
+MIT. SlingHook is made by [Fulcrum Software](https://github.com/fulcrum-software-za), South Africa.

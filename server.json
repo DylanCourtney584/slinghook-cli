@@ -5,7 +5,7 @@
   "description": "Inspect, debug and replay captured webhooks (Stripe, GitHub, Shopify) from your AI agent.",
   "websiteUrl": "https://slinghook.co.za",
   "repository": {
-    "url": "https://github.com/DylanCourtney584/slinghook-cli",
+    "url": "https://github.com/fulcrum-software-za/slinghook-cli",
     "source": "github"
   },
   "version": "0.5.2",
