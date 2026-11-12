@@ -1,5 +1,7 @@
 # slinghook CLI
 
+[![SlingHook MCP on mcprush](https://mcprush.com/badge/slinghook-mcp/score.svg)](https://mcprush.com/to/slinghook-mcp?ref=badge)
+
 Forwards webhooks captured by a SlingHook server to a server on your machine,
 such as `localhost:3000`. A hosted SlingHook instance can't reach your localhost,
 so the CLI makes the connection outbound, the same way `stripe listen` does.
@@ -196,8 +198,8 @@ echo '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | slinghook mcp
 
 - Bodies travel through the JSON event stream as text, so binary payloads aren't
   forwarded byte-for-byte.
-- There are no retries yet. A failed delivery is reported, and you can replay it
-  from the dashboard.
+- A delivery that still fails after its retries is reported and skipped; you can
+  replay it from the dashboard.
 
 ## Developing
 
