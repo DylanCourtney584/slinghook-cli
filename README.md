@@ -1,5 +1,7 @@
 # slinghook CLI
 
+[![SlingHook MCP on mcprush](https://mcprush.com/badge/slinghook-mcp/score.svg)](https://mcprush.com/to/slinghook-mcp?ref=badge)
+
 Forwards webhooks captured by a SlingHook server to a server on your machine,
 such as `localhost:3000`. A hosted SlingHook instance can't reach your localhost,
 so the CLI makes the connection outbound, the same way `stripe listen` does.
